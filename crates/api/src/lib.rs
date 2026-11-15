@@ -51,9 +51,7 @@ pub mod workspace;
 
 pub use error::{ApiError, ApiResult};
 pub use host::{DocumentHandle, DocumentHost, DocumentJob, DocumentJobs, Waker};
-pub use mcp::{
-    serve_io, serve_stdio, start_http, Forge3dMcpServer, HttpConfig, RunningHttpServer,
-};
+pub use mcp::{serve_io, serve_stdio, start_http, Forge3dMcpServer, HttpConfig, RunningHttpServer};
 pub use tools::{tool_defs, Forge3dTools, ToolDef, ToolOutput};
 pub use workspace::{PathAccess, Workspace};
 

@@ -23,7 +23,11 @@ use forge3d_core::command::Origin;
 use forge3d_core::document::Document;
 
 #[derive(Parser, Debug)]
-#[command(name = "forge3d", version, about = "forge3d 3D polygon modeler: MCP server, script runner and converter")]
+#[command(
+    name = "forge3d",
+    version,
+    about = "forge3d 3D polygon modeler: MCP server, script runner and converter"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -110,6 +114,7 @@ fn init_logging(default: &str) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .with_target(false)
         .try_init();
 }
@@ -164,7 +169,11 @@ async fn cmd_serve(args: ServeArgs) -> Result<ExitCode> {
     eprintln!(
         "forge3d MCP server listening on {} ({})",
         server.url,
-        if token.is_some() { "bearer token required" } else { "no auth, loopback only" }
+        if token.is_some() {
+            "bearer token required"
+        } else {
+            "no auth, loopback only"
+        }
     );
     let ct = server.cancellation_token();
     tokio::spawn(async move {
@@ -218,8 +227,20 @@ async fn cmd_run(args: RunArgs) -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     }
 
-    let state = tools.handle().run(|doc| doc.state()).await.map_err(api_err)?;
+    let state = tools
+        .handle()
+        .run(|doc| doc.state())
+        .await
+        .map_err(api_err)?;
+    let ensure_parent = |p: &Path| -> Result<()> {
+        if let Some(parent) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating directory {}", parent.display()))?;
+        }
+        Ok(())
+    };
     for out in &args.export {
+        ensure_parent(out)?;
         let written = forge3d_io::export_scene(&state.scene, out, &Default::default())
             .map_err(|e| anyhow::anyhow!("{} ({})", e, e.hint()))
             .with_context(|| format!("exporting {}", out.display()))?;
@@ -228,6 +249,7 @@ async fn cmd_run(args: RunArgs) -> Result<ExitCode> {
         }
     }
     if let Some(save) = &args.save {
+        ensure_parent(save)?;
         forge3d_io::save_project(&Document::from_state(state.clone()), save)
             .map_err(|e| anyhow::anyhow!("{} ({})", e, e.hint()))
             .with_context(|| format!("saving {}", save.display()))?;
@@ -243,11 +265,15 @@ async fn cmd_run(args: RunArgs) -> Result<ExitCode> {
             .await
             .map_err(api_err)?;
         let img = out.images.first().context("renderer returned no image")?;
-        if let Some(parent) = render.parent().filter(|p| !p.as_os_str().is_empty()) {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(render, &img.data).with_context(|| format!("writing {}", render.display()))?;
-        eprintln!("rendered {} ({}x{})", render.display(), img.width, img.height);
+        ensure_parent(render)?;
+        std::fs::write(render, &img.data)
+            .with_context(|| format!("writing {}", render.display()))?;
+        eprintln!(
+            "rendered {} ({}x{})",
+            render.display(),
+            img.width,
+            img.height
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -278,9 +304,15 @@ fn cmd_export(input: &Path, output: &Path) -> Result<ExitCode> {
         open_document(Some(input))?
     } else {
         let mut doc = Document::new();
-        forge3d_io::import_file_into_document(&mut doc, input, &Default::default(), None, Origin::Cli)
-            .map_err(|e| anyhow::anyhow!("{} ({})", e, e.hint()))
-            .with_context(|| format!("importing {}", input.display()))?;
+        forge3d_io::import_file_into_document(
+            &mut doc,
+            input,
+            &Default::default(),
+            None,
+            Origin::Cli,
+        )
+        .map_err(|e| anyhow::anyhow!("{} ({})", e, e.hint()))
+        .with_context(|| format!("importing {}", input.display()))?;
         doc
     };
     if doc.scene.is_empty() {
@@ -297,7 +329,10 @@ fn cmd_export(input: &Path, output: &Path) -> Result<ExitCode> {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("error: cannot start the async runtime: {e}");

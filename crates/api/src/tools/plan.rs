@@ -7,7 +7,7 @@ use forge3d_core::command::{ChangeSummary, Command};
 use forge3d_core::commands::AddNode;
 use forge3d_core::document::Document;
 use forge3d_core::error::{CoreError, CoreResult};
-use forge3d_core::math::{trs, quat_from_euler_deg, Space};
+use forge3d_core::math::{quat_from_euler_deg, trs, Space};
 use forge3d_core::mesh::ElementKind;
 use forge3d_core::scene::Node;
 use forge3d_core::selection::{SelectAction, SelectMode};
@@ -112,11 +112,15 @@ fn finite3(name: &str, v: [f32; 3]) -> ApiResult<Vec3> {
     if v.is_finite() {
         Ok(v)
     } else {
-        Err(ApiError::invalid_arguments(format!("`{name}` must contain finite numbers")))
+        Err(ApiError::invalid_arguments(format!(
+            "`{name}` must contain finite numbers"
+        )))
     }
 }
 
-fn objects_post(ids_from: fn(&ChangeSummary) -> Vec<Uuid>) -> impl FnOnce(&Document, &ChangeSummary) -> ApiResult<Value> + Send {
+fn objects_post(
+    ids_from: fn(&ChangeSummary) -> Vec<Uuid>,
+) -> impl FnOnce(&Document, &ChangeSummary) -> ApiResult<Value> + Send {
     move |doc, changes| {
         let infos = ids_from(changes)
             .into_iter()
@@ -157,13 +161,19 @@ pub(crate) fn object_create(doc: &Document, p: ObjectCreateParams) -> ApiResult<
                 .with_hint("Give a `primitive` (e.g. {\"type\":\"cube\"}) or drop `material`; assign materials to the mesh objects inside the group."));
             }
             let t = finite3("translation", p.translation.unwrap_or([0.0; 3]))?;
-            let r = finite3("rotation_euler_deg", p.rotation_euler_deg.unwrap_or([0.0; 3]))?;
+            let r = finite3(
+                "rotation_euler_deg",
+                p.rotation_euler_deg.unwrap_or([0.0; 3]),
+            )?;
             let s = finite3("scale", p.scale.unwrap_or([1.0; 3]))?;
             if s.abs().min_element() < 1e-8 {
                 return Err(CoreError::param("scale", "components must be non-zero").into());
             }
-            let node = Node::new(p.name.unwrap_or_else(|| "Empty".into()))
-                .with_transform(trs(t, quat_from_euler_deg(r.to_array()), s));
+            let node = Node::new(p.name.unwrap_or_else(|| "Empty".into())).with_transform(trs(
+                t,
+                quat_from_euler_deg(r.to_array()),
+                s,
+            ));
             Plan::new(Box::new(AddNode::new(node, parent, true, "empty")))
         }
     };
@@ -239,7 +249,11 @@ pub(crate) fn object_transform(doc: &Document, p: ObjectTransformParams) -> ApiR
             }
             if let Some(r) = p.rotation_euler_deg {
                 finite3("rotation_euler_deg", r)?;
-                for (axis, angle) in [([1.0, 0.0, 0.0], r[0]), ([0.0, 1.0, 0.0], r[1]), ([0.0, 0.0, 1.0], r[2])] {
+                for (axis, angle) in [
+                    ([1.0, 0.0, 0.0], r[0]),
+                    ([0.0, 1.0, 0.0], r[1]),
+                    ([0.0, 0.0, 1.0], r[2]),
+                ] {
                     if angle != 0.0 {
                         cmds.push(
                             CommandSpec::Rotate {
@@ -258,7 +272,9 @@ pub(crate) fn object_transform(doc: &Document, p: ObjectTransformParams) -> ApiR
                 (Some(axis), Some(angle)) => {
                     let a = finite3("rotation_axis", axis)?;
                     if a.length_squared() < 1e-12 {
-                        return Err(ApiError::invalid_arguments("`rotation_axis` must be non-zero"));
+                        return Err(ApiError::invalid_arguments(
+                            "`rotation_axis` must be non-zero",
+                        ));
                     }
                     cmds.push(
                         CommandSpec::Rotate {
@@ -301,7 +317,9 @@ pub(crate) fn object_transform(doc: &Document, p: ObjectTransformParams) -> ApiR
 
 pub(crate) fn object_delete(doc: &Document, p: ObjectDeleteParams) -> ApiResult<Plan> {
     if p.objects.is_empty() {
-        return Err(ApiError::invalid_arguments("`objects` must list at least one object"));
+        return Err(ApiError::invalid_arguments(
+            "`objects` must list at least one object",
+        ));
     }
     let objects = resolve_refs(&doc.scene, &Some(p.objects))?;
     Plan::spec(CommandSpec::DeleteObjects {
@@ -334,7 +352,9 @@ pub(crate) fn object_rename(doc: &Document, p: ObjectRenameParams) -> ApiResult<
 
 pub(crate) fn object_parent(doc: &Document, p: ObjectParentParams) -> ApiResult<Plan> {
     if p.objects.is_empty() {
-        return Err(ApiError::invalid_arguments("`objects` must list at least one object"));
+        return Err(ApiError::invalid_arguments(
+            "`objects` must list at least one object",
+        ));
     }
     let objects = resolve_refs(&doc.scene, &Some(p.objects))?.unwrap_or_default();
     let parent = resolve_opt(&doc.scene, &p.parent)?;
@@ -368,7 +388,9 @@ fn mesh_state(doc: &Document, id: Uuid, max_indices: usize) -> ApiResult<Value> 
     let mesh = doc.scene.mesh(id)?;
     let sel = doc.selection.elements(id);
     let cap = |s: Option<&std::collections::BTreeSet<u32>>| -> Value {
-        let list: Vec<u32> = s.map(|s| s.iter().take(max_indices).copied().collect()).unwrap_or_default();
+        let list: Vec<u32> = s
+            .map(|s| s.iter().take(max_indices).copied().collect())
+            .unwrap_or_default();
         Value::from(list)
     };
     Ok(json!({
@@ -543,7 +565,12 @@ pub(crate) fn mesh_select(doc: &Document, p: MeshSelectParams) -> ApiResult<Plan
     if let SelectBy::Objects { objects } = by {
         let ids = resolve_refs(&doc.scene, &Some(objects))?.unwrap_or_default();
         if doc.selection.mode != SelectMode::Object {
-            cmds.push(CommandSpec::SetSelectMode { mode: SelectMode::Object }.into_command()?);
+            cmds.push(
+                CommandSpec::SetSelectMode {
+                    mode: SelectMode::Object,
+                }
+                .into_command()?,
+            );
         }
         cmds.push(
             CommandSpec::SelectObjects {
@@ -552,9 +579,8 @@ pub(crate) fn mesh_select(doc: &Document, p: MeshSelectParams) -> ApiResult<Plan
             }
             .into_command()?,
         );
-        return Ok(Plan::new(Box::new(Sequence::new(cmds, None))).with_post(|doc, _| {
-            Ok(json!({ "selection": crate::info::selection_info(doc) }))
-        }));
+        return Ok(Plan::new(Box::new(Sequence::new(cmds, None)))
+            .with_post(|doc, _| Ok(json!({ "selection": crate::info::selection_info(doc) }))));
     }
     let id = active_mesh_object(doc, &p.object)?;
     doc.scene.mesh(id)?;
@@ -568,7 +594,9 @@ pub(crate) fn mesh_select(doc: &Document, p: MeshSelectParams) -> ApiResult<Plan
     };
     if let SelectBy::EdgeLoop { .. } = by {
         if p.kind.is_some_and(|k| k != ElementKind::Edge) {
-            return Err(ApiError::invalid_arguments("edge_loop always selects edges; use kind `edge` or omit it"));
+            return Err(ApiError::invalid_arguments(
+                "edge_loop always selects edges; use kind `edge` or omit it",
+            ));
         }
     }
     let target_mode = p.mode.unwrap_or(mode_for(kind));
@@ -659,7 +687,9 @@ pub(crate) fn boolean_op(doc: &Document, p: BooleanOpParams) -> ApiResult<Plan> 
     let a = resolve_ref(&doc.scene, &p.object)?;
     let b = resolve_ref(&doc.scene, &p.other)?;
     if a == b {
-        return Err(ApiError::invalid_arguments("`object` and `other` must be different objects"));
+        return Err(ApiError::invalid_arguments(
+            "`object` and `other` must be different objects",
+        ));
     }
     Ok(Plan::spec(CommandSpec::Boolean {
         object: Some(a),
@@ -674,7 +704,9 @@ pub(crate) fn material_set(doc: &Document, p: MaterialSetParams) -> ApiResult<Pl
     let objects = resolve_refs(&doc.scene, &p.objects)?;
     let material = match (p.material, p.clear) {
         (Some(_), true) => {
-            return Err(ApiError::invalid_arguments("give either `material` or `clear: true`, not both"))
+            return Err(ApiError::invalid_arguments(
+                "give either `material` or `clear: true`, not both",
+            ))
         }
         (None, false) => {
             return Err(ApiError::invalid_arguments(
@@ -689,7 +721,9 @@ pub(crate) fn material_set(doc: &Document, p: MaterialSetParams) -> ApiResult<Pl
 
 pub(crate) fn file_import(doc: &Document, p: FileImportParams, ctx: &Ctx) -> ApiResult<Plan> {
     let parent = resolve_opt(&doc.scene, &p.parent)?;
-    let path = ctx.workspace.resolve(&p.path, crate::workspace::PathAccess::Read)?;
+    let path = ctx
+        .workspace
+        .resolve(&p.path, crate::workspace::PathAccess::Read)?;
     let opts = forge3d_io::ImportOptions {
         weld: p.weld,
         obj_up_axis: match p.obj_up_axis {

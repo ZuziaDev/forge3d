@@ -303,7 +303,11 @@ pub fn tool_defs() -> Vec<ToolDef> {
 }
 
 fn batchable_names() -> Vec<&'static str> {
-    TOOLS.iter().filter(|t| t.batchable).map(|t| t.name).collect()
+    TOOLS
+        .iter()
+        .filter(|t| t.batchable)
+        .map(|t| t.name)
+        .collect()
 }
 
 /// Parse arguments into a typed parameter struct with a path-qualified error.
@@ -349,13 +353,14 @@ fn plan_tool(doc: &Document, name: &str, args: Value, ctx: &Ctx) -> ApiResult<Pl
         "boolean_op" => plan::boolean_op(doc, parse_args(args)?),
         "material_set" => plan::material_set(doc, parse_args(args)?),
         "file_import" => plan::file_import(doc, parse_args(args)?, ctx),
-        other => Err(ApiError::invalid_arguments(format!(
-            "tool '{other}' cannot be used here"
-        ))
-        .with_hint(format!(
-            "Only document-editing tools can be batch steps: {}.",
-            batchable_names().join(", ")
-        ))),
+        other => Err(
+            ApiError::invalid_arguments(format!("tool '{other}' cannot be used here")).with_hint(
+                format!(
+                    "Only document-editing tools can be batch steps: {}.",
+                    batchable_names().join(", ")
+                ),
+            ),
+        ),
     }
 }
 
@@ -388,7 +393,9 @@ pub struct Forge3dTools {
 
 impl std::fmt::Debug for Forge3dTools {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Forge3dTools").field("ctx", &self.ctx).finish()
+        f.debug_struct("Forge3dTools")
+            .field("ctx", &self.ctx)
+            .finish()
     }
 }
 
@@ -465,13 +472,25 @@ impl Forge3dTools {
             "undo" | "redo" => {
                 let p: StepsParams = parse_args(args)?;
                 let redo = name == "redo";
-                let v = self.handle.run(move |doc| undo_redo(doc, p, redo)).await??;
+                let v = self
+                    .handle
+                    .run(move |doc| undo_redo(doc, p, redo))
+                    .await??;
                 Ok(ToolOutput::json(v))
             }
             "viewport_render" => render::viewport_render(self, parse_args(args)?).await,
-            "file_export" => self.file_export(parse_args(args)?).await.map(ToolOutput::json),
-            "project_save" => self.project_save(parse_args(args)?).await.map(ToolOutput::json),
-            "project_load" => self.project_load(parse_args(args)?).await.map(ToolOutput::json),
+            "file_export" => self
+                .file_export(parse_args(args)?)
+                .await
+                .map(ToolOutput::json),
+            "project_save" => self
+                .project_save(parse_args(args)?)
+                .await
+                .map(ToolOutput::json),
+            "project_load" => self
+                .project_load(parse_args(args)?)
+                .await
+                .map(ToolOutput::json),
             "batch" => {
                 let p: BatchParams = parse_args(args)?;
                 let v = self
@@ -562,11 +581,14 @@ impl Forge3dTools {
         let path = self.ctx.workspace.resolve(&p.path, PathAccess::Read)?;
         check_f3d(&path, &p.path)?;
         let p2 = path.clone();
-        let loaded = blocking(move || forge3d_io::load_project(&p2).map_err(ApiError::from)).await?;
+        let loaded =
+            blocking(move || forge3d_io::load_project(&p2).map_err(ApiError::from)).await?;
         let state = loaded.state();
         let label = format!(
             "Load project '{}'",
-            path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+            path.file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_default()
         );
         let origin = self.ctx.origin;
         let clear = p.clear_history;
@@ -717,7 +739,8 @@ fn mesh_get(doc: &Document, p: MeshGetParams) -> ApiResult<Value> {
                             "position": round3(to_space(mesh.position(v)).to_array()),
                         });
                         if p.normals {
-                            item["normal"] = json!(round3(to_normal(mesh.vertex_normal(v)).to_array()));
+                            item["normal"] =
+                                json!(round3(to_normal(mesh.vertex_normal(v)).to_array()));
                         }
                         item
                     })
@@ -735,7 +758,8 @@ fn mesh_get(doc: &Document, p: MeshGetParams) -> ApiResult<Value> {
                             "center": round3(to_space(mesh.face_centroid(f)).to_array()),
                         });
                         if p.normals {
-                            item["normal"] = json!(round3(to_normal(mesh.face_normal(f)).to_array()));
+                            item["normal"] =
+                                json!(round3(to_normal(mesh.face_normal(f)).to_array()));
                         }
                         item
                     })
@@ -846,7 +870,10 @@ fn parse_step(s: BatchStepSchema) -> ApiResult<Step> {
             if !TOOLS.iter().any(|t| t.name == tool) {
                 return Err(ApiError::unknown_tool(&tool, &batchable_names()));
             }
-            Ok(Step::Tool(tool, Value::Object(s.arguments.unwrap_or_default())))
+            Ok(Step::Tool(
+                tool,
+                Value::Object(s.arguments.unwrap_or_default()),
+            ))
         }
         (None, Some(cmd)) => {
             if s.arguments.is_some() {
@@ -856,7 +883,9 @@ fn parse_step(s: BatchStepSchema) -> ApiResult<Step> {
                 .map_err(|e| forge3d_core::error::CoreError::InvalidCommand(e.to_string()))?;
             Ok(Step::Command(spec))
         }
-        (Some(_), Some(_)) => Err(ApiError::invalid_arguments("a step has either `tool` or `command`, not both")),
+        (Some(_), Some(_)) => Err(ApiError::invalid_arguments(
+            "a step has either `tool` or `command`, not both",
+        )),
         (None, None) => Err(ApiError::invalid_arguments(
             "a step needs `tool` (+ `arguments`) or `command`",
         )),
@@ -882,9 +911,14 @@ fn batch_error(index: usize, label: &str, e: ApiError) -> ApiError {
     }
 }
 
-fn rollback(doc: &mut Document, applied: &mut [Box<dyn Command>], before: &forge3d_core::selection::Selection) -> ApiResult<()> {
+fn rollback(
+    doc: &mut Document,
+    applied: &mut [Box<dyn Command>],
+    before: &forge3d_core::selection::Selection,
+) -> ApiResult<()> {
     for c in applied.iter_mut().rev() {
-        c.undo(doc).map_err(|e| ApiError::internal(format!("batch rollback failed: {e}")))?;
+        c.undo(doc)
+            .map_err(|e| ApiError::internal(format!("batch rollback failed: {e}")))?;
     }
     doc.selection = before.clone();
     Ok(())
@@ -892,7 +926,9 @@ fn rollback(doc: &mut Document, applied: &mut [Box<dyn Command>], before: &forge
 
 fn run_batch(doc: &mut Document, p: BatchParams, ctx: &Ctx) -> ApiResult<Value> {
     if p.steps.is_empty() {
-        return Err(ApiError::invalid_arguments("`steps` must contain at least one step"));
+        return Err(ApiError::invalid_arguments(
+            "`steps` must contain at least one step",
+        ));
     }
     if p.steps.len() > MAX_BATCH_STEPS {
         return Err(ApiError::invalid_arguments(format!(
@@ -915,13 +951,24 @@ fn run_batch(doc: &mut Document, p: BatchParams, ctx: &Ctx) -> ApiResult<Value> 
         let planned = match step {
             Step::Tool(name, args) => {
                 if !TOOLS.iter().any(|t| t.name == name && t.batchable) {
-                    Err(ApiError::invalid_arguments(format!("tool '{name}' cannot be a batch step"))
-                        .with_hint(format!("Batch steps can use: {}.", batchable_names().join(", "))))
+                    Err(ApiError::invalid_arguments(format!(
+                        "tool '{name}' cannot be a batch step"
+                    ))
+                    .with_hint(format!(
+                        "Batch steps can use: {}.",
+                        batchable_names().join(", ")
+                    )))
                 } else {
                     plan_tool(doc, &name, args, ctx)
                 }
             }
-            Step::Command(spec) => spec.into_command().map(|command| Plan { command, post: None }).map_err(ApiError::from),
+            Step::Command(spec) => spec
+                .into_command()
+                .map(|command| Plan {
+                    command,
+                    post: None,
+                })
+                .map_err(ApiError::from),
         };
         let Plan { mut command, post } = match planned {
             Ok(p) => p,

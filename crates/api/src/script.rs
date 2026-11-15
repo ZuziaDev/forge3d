@@ -50,9 +50,9 @@ impl ScriptStep {
     pub fn label(&self) -> String {
         match self {
             ScriptStep::Tool { tool, name, .. } => name.clone().unwrap_or_else(|| tool.clone()),
-            ScriptStep::Command { spec, name } => {
-                name.clone().unwrap_or_else(|| format!("op:{}", spec.op_name()))
-            }
+            ScriptStep::Command { spec, name } => name
+                .clone()
+                .unwrap_or_else(|| format!("op:{}", spec.op_name())),
         }
     }
 
@@ -98,9 +98,13 @@ fn parse_step(i: usize, v: Value) -> ApiResult<ScriptStep> {
         let Value::String(tool) = tool else {
             return Err(err("`tool` must be a string".into()));
         };
-        let arguments = m.remove("arguments").unwrap_or(Value::Object(Default::default()));
+        let arguments = m
+            .remove("arguments")
+            .unwrap_or(Value::Object(Default::default()));
         if let Some(k) = m.keys().next() {
-            return Err(err(format!("unknown field `{k}` next to `tool` (put tool parameters inside `arguments`)")));
+            return Err(err(format!(
+                "unknown field `{k}` next to `tool` (put tool parameters inside `arguments`)"
+            )));
         }
         return Ok(ScriptStep::Tool {
             tool,

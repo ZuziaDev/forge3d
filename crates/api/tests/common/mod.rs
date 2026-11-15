@@ -21,7 +21,10 @@ impl Env {
     pub async fn ok(&self, tool: &str, args: Value) -> Value {
         match self.tools.call(tool, args.clone()).await {
             Ok(v) => v,
-            Err(e) => panic!("{tool} {args} failed: {}", serde_json::to_string_pretty(&e).unwrap()),
+            Err(e) => panic!(
+                "{tool} {args} failed: {}",
+                serde_json::to_string_pretty(&e).unwrap()
+            ),
         }
     }
 
@@ -29,7 +32,10 @@ impl Env {
         match self.tools.call(tool, args.clone()).await {
             Ok(v) => panic!("{tool} {args} unexpectedly succeeded: {v}"),
             Err(e) => {
-                assert!(!e.code.is_empty() && !e.message.is_empty() && !e.hint.is_empty(), "{e:?}");
+                assert!(
+                    !e.code.is_empty() && !e.message.is_empty() && !e.hint.is_empty(),
+                    "{e:?}"
+                );
                 e
             }
         }
@@ -37,7 +43,10 @@ impl Env {
 
     pub async fn cube(&self, name: &str) -> String {
         let v = self
-            .ok("object_create", json!({"primitive": {"type": "cube", "size": 2.0}, "name": name}))
+            .ok(
+                "object_create",
+                json!({"primitive": {"type": "cube", "size": 2.0}, "name": name}),
+            )
             .await;
         v["object"]["id"].as_str().unwrap().to_string()
     }
@@ -69,7 +78,12 @@ impl Env {
 }
 
 pub fn approx(v: &Value, expected: [f64; 3]) {
-    let a: Vec<f64> = v.as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+    let a: Vec<f64> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_f64().unwrap())
+        .collect();
     for i in 0..3 {
         assert!((a[i] - expected[i]).abs() < 1e-3, "{a:?} != {expected:?}");
     }

@@ -40,7 +40,11 @@ pub async fn list_resources(handle: &DocumentHandle) -> ApiResult<Vec<ResourceIn
             doc.scene
                 .traverse()
                 .into_iter()
-                .filter_map(|id| doc.scene.get(id).map(|n| (id, n.name.clone(), n.mesh.as_ref().map(|m| m.face_count()))))
+                .filter_map(|id| {
+                    doc.scene
+                        .get(id)
+                        .map(|n| (id, n.name.clone(), n.mesh.as_ref().map(|m| m.face_count())))
+                })
                 .collect::<Vec<_>>()
         })
         .await?;
@@ -48,7 +52,8 @@ pub async fn list_resources(handle: &DocumentHandle) -> ApiResult<Vec<ResourceIn
         ResourceInfo {
             uri: SCENE_URI.into(),
             name: "scene".into(),
-            description: "Scene tree: objects, transforms, materials, counts, bounds, selection.".into(),
+            description: "Scene tree: objects, transforms, materials, counts, bounds, selection."
+                .into(),
             mime_type: "application/json".into(),
         },
         ResourceInfo {
@@ -60,7 +65,8 @@ pub async fn list_resources(handle: &DocumentHandle) -> ApiResult<Vec<ResourceIn
         ResourceInfo {
             uri: COMMAND_SCHEMA_URI.into(),
             name: "command-schema".into(),
-            description: "JSON Schema of raw CommandSpec objects usable as batch `command` steps.".into(),
+            description: "JSON Schema of raw CommandSpec objects usable as batch `command` steps."
+                .into(),
             mime_type: "application/schema+json".into(),
         },
     ];
@@ -81,9 +87,11 @@ pub async fn list_resources(handle: &DocumentHandle) -> ApiResult<Vec<ResourceIn
 /// Read a resource as JSON.
 pub async fn read_resource(handle: &DocumentHandle, uri: &str) -> ApiResult<Value> {
     match uri {
-        SCENE_URI => handle
-            .run(|doc| scene_info(doc).map(|s| serde_json::to_value(s).expect("serializes")))
-            .await?,
+        SCENE_URI => {
+            handle
+                .run(|doc| scene_info(doc).map(|s| serde_json::to_value(s).expect("serializes")))
+                .await?
+        }
         HISTORY_URI => {
             handle
                 .run(|doc| {
