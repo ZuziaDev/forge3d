@@ -75,7 +75,10 @@ impl Mesh {
                 || l.radial_prev.index() >= nl;
             if bad {
                 dangling += 1;
-                push(&mut issues, format!("loop {li} references out of range elements"));
+                push(
+                    &mut issues,
+                    format!("loop {li} references out of range elements"),
+                );
                 continue;
             }
             let lid = LoopId(li as u32);
@@ -88,7 +91,8 @@ impl Mesh {
             let in_face = (face.first.0..face.first.0 + face.len).contains(&(li as u32));
             let ev = self.edges[l.edge.index()].vertices;
             let target = self.loops[l.next.index()].vertex;
-            let edge_ok = (ev[0] == l.vertex && ev[1] == target) || (ev[1] == l.vertex && ev[0] == target);
+            let edge_ok =
+                (ev[0] == l.vertex && ev[1] == target) || (ev[1] == l.vertex && ev[0] == target);
             if !consistent || !in_face || !edge_ok {
                 dangling += 1;
                 push(&mut issues, format!("loop {li} has inconsistent links"));
@@ -97,15 +101,24 @@ impl Mesh {
         for (ei, e) in self.edges.iter().enumerate() {
             if e.vertices[0].index() >= nv || e.vertices[1].index() >= nv || e.loop_.index() >= nl {
                 dangling += 1;
-                push(&mut issues, format!("edge {ei} references out of range elements"));
+                push(
+                    &mut issues,
+                    format!("edge {ei} references out of range elements"),
+                );
             } else if self.loops[e.loop_.index()].edge.index() != ei {
                 dangling += 1;
-                push(&mut issues, format!("edge {ei} points to a loop of another edge"));
+                push(
+                    &mut issues,
+                    format!("edge {ei} points to a loop of another edge"),
+                );
             }
         }
         if self.vert_edge_start.len() != nv + 1 {
             dangling += 1;
-            push(&mut issues, "vertex adjacency table has the wrong size".into());
+            push(
+                &mut issues,
+                "vertex adjacency table has the wrong size".into(),
+            );
         }
         if dangling > 0 {
             // Topology queries below are unsafe on broken data.
@@ -214,7 +227,10 @@ impl Mesh {
         for f in self.face_ids() {
             if self.face_area(f) <= area_eps {
                 degenerate += 1;
-                push(&mut issues, format!("face {} is degenerate (zero area)", f.0));
+                push(
+                    &mut issues,
+                    format!("face {} is degenerate (zero area)", f.0),
+                );
             }
         }
 

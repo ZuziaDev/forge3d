@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-
 use super::{check_edges, loose_mask, require_nonempty, OpResult};
 use crate::error::{CoreError, CoreResult};
 use crate::mesh::soup::Soup;
@@ -24,7 +23,10 @@ pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpRe
     require_nonempty(edges, "edges")?;
     check_edges(mesh, edges)?;
     if !(width.is_finite() && width > 0.0) {
-        return Err(CoreError::param("width", "must be a positive finite number"));
+        return Err(CoreError::param(
+            "width",
+            "must be a positive finite number",
+        ));
     }
     let nv = mesh.vertex_count();
     let mut sel = vec![false; mesh.edge_count()];
@@ -94,7 +96,10 @@ pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpRe
         let p = mesh.position(v);
         let prev = mesh.position(mesh.loop_vertex(mesh.loop_prev(l)));
         let next = mesh.position(mesh.loop_target(l));
-        ((prev - p).normalize_or_zero(), (next - p).normalize_or_zero())
+        (
+            (prev - p).normalize_or_zero(),
+            (next - p).normalize_or_zero(),
+        )
     };
     for f in mesh.face_ids() {
         for l in mesh.face_loops(f) {
@@ -126,7 +131,11 @@ pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpRe
         }
     }
     let mut slide_vert: HashMap<(u32, u32), u32> = HashMap::new();
-    let mut keys: Vec<(u32, u32)> = slide_adj.keys().copied().chain(slide_any.iter().copied()).collect();
+    let mut keys: Vec<(u32, u32)> = slide_adj
+        .keys()
+        .copied()
+        .chain(slide_any.iter().copied())
+        .collect();
     keys.sort_unstable();
     keys.dedup();
     for (v, e) in keys {
@@ -138,7 +147,11 @@ pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpRe
             Some(&(sum, n)) => sum / n as f32,
             None => width,
         };
-        let limit = if bev[other.index()] { 0.45 * len } else { 0.9 * len };
+        let limit = if bev[other.index()] {
+            0.45 * len
+        } else {
+            0.9 * len
+        };
         d = d.min(limit);
         let dir = (mesh.position(other) - mesh.position(vid)).normalize_or_zero();
         let nvx = soup.add_vertex(mesh.position(vid) + dir * d);
@@ -256,6 +269,8 @@ pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpRe
     soup.remove_unused_vertices(Some(&keep_all));
     let mesh = soup.into_mesh()?;
     let mut selection = ElementSelection::default();
-    selection.faces.extend(bevel_faces.into_iter().map(|f| f as u32));
+    selection
+        .faces
+        .extend(bevel_faces.into_iter().map(|f| f as u32));
     Ok(OpResult { mesh, selection })
 }

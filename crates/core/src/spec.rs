@@ -446,12 +446,18 @@ fn local_transform(
     rotation: Option<[f32; 3]>,
     scale: Option<[f32; 3]>,
 ) -> CoreResult<Affine3A> {
-    let t = translation.map(|t| check3("translation", t)).transpose()?.unwrap_or(Vec3::ZERO);
+    let t = translation
+        .map(|t| check3("translation", t))
+        .transpose()?
+        .unwrap_or(Vec3::ZERO);
     let r = rotation
         .map(|r| check3("rotation_euler_deg", r).map(|v| quat_from_euler_deg(v.to_array())))
         .transpose()?
         .unwrap_or_default();
-    let s = scale.map(|s| check3("scale", s)).transpose()?.unwrap_or(Vec3::ONE);
+    let s = scale
+        .map(|s| check3("scale", s))
+        .transpose()?
+        .unwrap_or(Vec3::ONE);
     if s.abs().min_element() < 1e-8 {
         return Err(CoreError::param("scale", "components must be non-zero"));
     }
@@ -502,9 +508,10 @@ impl CommandSpec {
                 if let Some(m) = &material {
                     m.validate()?;
                 }
-                let mut node = Node::new(name.unwrap_or_else(|| primitive.default_name().to_string()))
-                    .with_mesh(mesh)
-                    .with_transform(local_transform(translation, rotation_euler_deg, scale)?);
+                let mut node =
+                    Node::new(name.unwrap_or_else(|| primitive.default_name().to_string()))
+                        .with_mesh(mesh)
+                        .with_transform(local_transform(translation, rotation_euler_deg, scale)?);
                 node.material = material;
                 let what = primitive.default_name().to_lowercase();
                 Box::new(AddNode::new(node, parent, true, what))
@@ -592,7 +599,9 @@ impl CommandSpec {
             CommandSpec::DuplicateObjects { objects, offset } => {
                 Box::new(DuplicateObjects::new(objects, v3(offset))?)
             }
-            CommandSpec::RenameObject { object, name } => Box::new(RenameObject::new(object, name)?),
+            CommandSpec::RenameObject { object, name } => {
+                Box::new(RenameObject::new(object, name)?)
+            }
             CommandSpec::Reparent {
                 object,
                 parent,
@@ -645,7 +654,10 @@ impl CommandSpec {
                 edge,
                 cuts,
                 factor,
-            } => Box::new(MeshEdit::new(object, MeshOp::LoopCut { edge, cuts, factor })),
+            } => Box::new(MeshEdit::new(
+                object,
+                MeshOp::LoopCut { edge, cuts, factor },
+            )),
             CommandSpec::Subdivide { object, levels } => {
                 Box::new(MeshEdit::new(object, MeshOp::Subdivide { levels }))
             }
@@ -723,7 +735,10 @@ impl CommandSpec {
                 Box::new(SelectCommand::new(SelectionChange::Mode(mode)))
             }
             CommandSpec::SelectObjects { objects, action } => {
-                Box::new(SelectCommand::new(SelectionChange::Objects { objects, action }))
+                Box::new(SelectCommand::new(SelectionChange::Objects {
+                    objects,
+                    action,
+                }))
             }
             CommandSpec::SetActiveObject { object } => {
                 Box::new(SelectCommand::new(SelectionChange::Active(object)))
@@ -806,7 +821,10 @@ impl CommandSpec {
                 commands,
             } => {
                 if commands.is_empty() {
-                    return Err(CoreError::param("commands", "batch must contain at least one command"));
+                    return Err(CoreError::param(
+                        "commands",
+                        "batch must contain at least one command",
+                    ));
                 }
                 let cmds = commands
                     .into_iter()

@@ -69,7 +69,10 @@ fn name_of(doc: &Document, id: Uuid) -> String {
 }
 
 fn names(doc: &Document, ids: &[Uuid]) -> String {
-    let n: Vec<String> = ids.iter().map(|&i| format!("'{}'", name_of(doc, i))).collect();
+    let n: Vec<String> = ids
+        .iter()
+        .map(|&i| format!("'{}'", name_of(doc, i)))
+        .collect();
     n.join(", ")
 }
 
@@ -331,7 +334,10 @@ impl TransformObjects {
                     Space::World => {
                         let p = pivot.unwrap_or(Vec3::from(world.translation));
                         from_world(
-                            Affine3A::from_translation(p) * r * Affine3A::from_translation(-p) * world,
+                            Affine3A::from_translation(p)
+                                * r
+                                * Affine3A::from_translation(-p)
+                                * world,
                         )
                     }
                     Space::Local => local * r,
@@ -342,7 +348,10 @@ impl TransformObjects {
                 match pivot {
                     None => local * s,
                     Some(p) => from_world(
-                        Affine3A::from_translation(*p) * s * Affine3A::from_translation(-*p) * world,
+                        Affine3A::from_translation(*p)
+                            * s
+                            * Affine3A::from_translation(-*p)
+                            * world,
                     ),
                 }
             }
@@ -360,13 +369,18 @@ impl Command for TransformObjects {
             let ids: Vec<Uuid> = ids
                 .iter()
                 .copied()
-                .filter(|&i| !relative || !ids.iter().any(|&a| a != i && doc.scene.is_ancestor(a, i)))
+                .filter(|&i| {
+                    !relative || !ids.iter().any(|&a| a != i && doc.scene.is_ancestor(a, i))
+                })
                 .collect();
             let mut resolved = Vec::with_capacity(ids.len());
             for &id in &ids {
                 let new = self.compute(doc, id)?;
                 if !new.is_finite() {
-                    return Err(CoreError::param("transform", "produces a non-finite matrix"));
+                    return Err(CoreError::param(
+                        "transform",
+                        "produces a non-finite matrix",
+                    ));
                 }
                 resolved.push((id, doc.scene.node(id)?.transform, new));
             }
@@ -558,8 +572,7 @@ impl DuplicateObjects {
                     let index = doc.scene.sibling_index(src)? + 1;
                     let pw = parent_world(doc, src)?;
                     let world = doc.scene.world_transform(src)?;
-                    copy.transform =
-                        pw.inverse() * Affine3A::from_translation(self.offset) * world;
+                    copy.transform = pw.inverse() * Affine3A::from_translation(self.offset) * world;
                     let id = doc.scene.insert_node(copy, parent, Some(index))?;
                     roots.push(id);
                 } else {
@@ -691,7 +704,8 @@ impl Command for Reparent {
         };
         let n = doc.scene.node(id)?;
         let state = (id, n.parent(), doc.scene.sibling_index(id)?, n.transform);
-        doc.scene.set_parent(id, self.parent, self.keep_world, None)?;
+        doc.scene
+            .set_parent(id, self.parent, self.keep_world, None)?;
         self.desc = match self.parent {
             Some(p) => format!("Parent '{}' to '{}'", name_of(doc, id), name_of(doc, p)),
             None => format!("Clear parent of '{}'", name_of(doc, id)),
@@ -940,7 +954,12 @@ impl MeshOp {
     }
 
     /// Run the operation. Returns the result and a short detail string.
-    fn run(&self, mesh: &Mesh, sel: &ElementSelection, mode: SelectMode) -> CoreResult<(OpResult, String)> {
+    fn run(
+        &self,
+        mesh: &Mesh,
+        sel: &ElementSelection,
+        mode: SelectMode,
+    ) -> CoreResult<(OpResult, String)> {
         let empty = ElementSelection::default;
         match self {
             MeshOp::Extrude {
@@ -960,7 +979,10 @@ impl MeshOp {
             } => {
                 let f = Self::faces_or_selection(mesh, faces, sel)?;
                 let d = plural(f.len(), "face");
-                Ok((ops::inset_faces(mesh, &f, *thickness, *depth, *individual)?, d))
+                Ok((
+                    ops::inset_faces(mesh, &f, *thickness, *depth, *individual)?,
+                    d,
+                ))
             }
             MeshOp::Bevel { edges, width } => {
                 let e: Vec<EdgeId> = match edges {
@@ -1012,23 +1034,23 @@ impl MeshOp {
                         Ok((ops::merge_at_center(mesh, &v)?, d))
                     }
                     MergeKind::Distance { threshold } => {
-                        let (r, removed) = ops::merge_by_distance(mesh, verts.as_deref(), *threshold)?;
+                        let (r, removed) =
+                            ops::merge_by_distance(mesh, verts.as_deref(), *threshold)?;
                         Ok((r, format!("by distance ({removed} removed)")))
                     }
                 }
             }
             MeshOp::Delete { kind, indices } => {
-                let kind = kind.or(mode.element_kind()).or_else(|| {
-                    if !sel.faces.is_empty() {
-                        Some(ElementKind::Face)
-                    } else if !sel.edges.is_empty() {
-                        Some(ElementKind::Edge)
-                    } else if !sel.vertices.is_empty() {
-                        Some(ElementKind::Vertex)
-                    } else {
-                        None
-                    }
-                });
+                let inferred = if !sel.faces.is_empty() {
+                    Some(ElementKind::Face)
+                } else if !sel.edges.is_empty() {
+                    Some(ElementKind::Edge)
+                } else if !sel.vertices.is_empty() {
+                    Some(ElementKind::Vertex)
+                } else {
+                    None
+                };
+                let kind = kind.or(mode.element_kind()).or(inferred);
                 let kind = kind.ok_or_else(|| {
                     CoreError::EmptySelection("nothing to delete; pass `kind` and `indices`".into())
                 })?;
@@ -1038,9 +1060,17 @@ impl MeshOp {
                         v.clone()
                     }
                     None => match kind {
-                        ElementKind::Vertex => sel.resolved_vertices(mesh).into_iter().map(|v| v.0).collect(),
-                        ElementKind::Edge => sel.resolved_edges(mesh).into_iter().map(|e| e.0).collect(),
-                        ElementKind::Face => sel.resolved_faces(mesh).into_iter().map(|f| f.0).collect(),
+                        ElementKind::Vertex => sel
+                            .resolved_vertices(mesh)
+                            .into_iter()
+                            .map(|v| v.0)
+                            .collect(),
+                        ElementKind::Edge => {
+                            sel.resolved_edges(mesh).into_iter().map(|e| e.0).collect()
+                        }
+                        ElementKind::Face => {
+                            sel.resolved_faces(mesh).into_iter().map(|f| f.0).collect()
+                        }
                     },
                 };
                 let word = match kind {
@@ -1079,7 +1109,11 @@ impl MeshOp {
                         mesh: m,
                         selection: sel.clone(),
                     },
-                    if *inside { "inside".into() } else { "outside".into() },
+                    if *inside {
+                        "inside".into()
+                    } else {
+                        "outside".into()
+                    },
                 ))
             }
             MeshOp::FlipNormals { faces } => {
@@ -1135,7 +1169,9 @@ impl MeshOp {
                     ));
                 }
                 let p = pivot.unwrap_or_else(|| ops::vertices_center(mesh, &verts));
-                let m = Affine3A::from_translation(p) * *matrix_about_pivot * Affine3A::from_translation(-p);
+                let m = Affine3A::from_translation(p)
+                    * *matrix_about_pivot
+                    * Affine3A::from_translation(-p);
                 let d = plural(verts.len(), "vertex");
                 Ok((
                     OpResult {
@@ -1200,7 +1236,8 @@ impl Command for MeshEdit {
         }
         let st = self.state.as_ref().expect("resolved");
         *doc.scene.mesh_mut(st.id)? = st.after.clone();
-        doc.selection.set_elements(st.id, st.selection_after.clone());
+        doc.selection
+            .set_elements(st.id, st.selection_after.clone());
         ChangeSummary::new().modified(&doc.scene, st.id)
     }
 
@@ -1228,7 +1265,12 @@ pub struct BooleanObjects {
 }
 
 impl BooleanObjects {
-    pub fn new(target: Option<Uuid>, other: Uuid, op: BooleanOp, keep_other: bool) -> BooleanObjects {
+    pub fn new(
+        target: Option<Uuid>,
+        other: Uuid,
+        op: BooleanOp,
+        keep_other: bool,
+    ) -> BooleanObjects {
         BooleanObjects {
             target,
             other,
@@ -1258,7 +1300,8 @@ impl Command for BooleanObjects {
             }
             let a = doc.scene.mesh(id)?;
             let b = doc.scene.mesh(self.other)?;
-            let to_a = doc.scene.world_transform(id)?.inverse() * doc.scene.world_transform(self.other)?;
+            let to_a =
+                doc.scene.world_transform(id)?.inverse() * doc.scene.world_transform(self.other)?;
             let mut b_local = b.clone();
             b_local.transform(&to_a);
             let result = ops::boolean(a, &b_local, self.op)?;
@@ -1462,7 +1505,8 @@ impl SelectCommand {
                 let k = resolve_kind(doc, *kind)?;
                 let (id, mesh) = mesh_target(*object)?;
                 sel::check_indices(mesh, k, indices)?;
-                s.elements_mut(id).apply(k, indices.iter().copied(), *action);
+                s.elements_mut(id)
+                    .apply(k, indices.iter().copied(), *action);
                 format!(
                     "Select {} ({action:?}) on '{}'",
                     plural(indices.len(), &format!("{k:?}").to_lowercase()),

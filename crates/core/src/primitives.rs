@@ -169,7 +169,10 @@ fn positive(name: &str, v: f32) -> CoreResult<()> {
     if v.is_finite() && v > 0.0 {
         Ok(())
     } else {
-        Err(CoreError::param(name, format!("must be a positive finite number, got {v}")))
+        Err(CoreError::param(
+            name,
+            format!("must be a positive finite number, got {v}"),
+        ))
     }
 }
 
@@ -177,7 +180,10 @@ fn segments(name: &str, v: u32, min: u32) -> CoreResult<()> {
     if (min..=MAX_SEGMENTS).contains(&v) {
         Ok(())
     } else {
-        Err(CoreError::param(name, format!("must be in {min}..={MAX_SEGMENTS}, got {v}")))
+        Err(CoreError::param(
+            name,
+            format!("must be in {min}..={MAX_SEGMENTS}, got {v}"),
+        ))
     }
 }
 
@@ -256,7 +262,12 @@ pub fn uv_sphere(radius: f32, segs: u32, rings: u32) -> CoreResult<Mesh> {
     }
     for k in 1..rings - 1 {
         for i in 0..segs {
-            f.push(vec![ring(k, i), ring(k + 1, i), ring(k + 1, i + 1), ring(k, i + 1)]);
+            f.push(vec![
+                ring(k, i),
+                ring(k + 1, i),
+                ring(k + 1, i + 1),
+                ring(k, i + 1),
+            ]);
         }
     }
     for i in 0..segs {

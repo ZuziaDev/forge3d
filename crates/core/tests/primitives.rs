@@ -24,7 +24,9 @@ fn plane_is_open_with_boundary() {
     let r = m.validate();
     assert!(r.is_valid && r.is_manifold && !r.is_closed);
     assert_eq!(r.boundary_edges, 12);
-    assert!(m.face_ids().all(|f| m.face_normal(f).abs_diff_eq(glam::Vec3::Z, 1e-6)));
+    assert!(m
+        .face_ids()
+        .all(|f| m.face_normal(f).abs_diff_eq(glam::Vec3::Z, 1e-6)));
     assert_eq!(m.boundary_loops().len(), 1);
     assert_eq!(m.boundary_loops()[0].len(), 12);
     assert_approx(m.surface_area(), 4.0, 1e-4);
@@ -45,7 +47,12 @@ fn uv_sphere() {
 
 #[test]
 fn ico_sphere() {
-    for (n, v, f) in [(0u32, 12usize, 20usize), (1, 42, 80), (2, 162, 320), (3, 642, 1280)] {
+    for (n, v, f) in [
+        (0u32, 12usize, 20usize),
+        (1, 42, 80),
+        (2, 162, 320),
+        (3, 642, 1280),
+    ] {
         let m = p::ico_sphere(1.0, n).unwrap();
         assert_eq!((m.vertex_count(), m.face_count()), (v, f));
         assert_eq!(m.euler_characteristic(), 2);

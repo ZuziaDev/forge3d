@@ -33,9 +33,16 @@ pub fn merge_at_center(mesh: &Mesh, verts: &[VertexId]) -> CoreResult<OpResult> 
 /// Weld vertices closer than `threshold`. Only the given vertices take part
 /// (all vertices when `verts` is `None`). Returns the result and the number
 /// of vertices removed. Merged vertices are selected afterwards.
-pub fn merge_by_distance(mesh: &Mesh, verts: Option<&[VertexId]>, threshold: f32) -> CoreResult<(OpResult, usize)> {
+pub fn merge_by_distance(
+    mesh: &Mesh,
+    verts: Option<&[VertexId]>,
+    threshold: f32,
+) -> CoreResult<(OpResult, usize)> {
     if !(threshold.is_finite() && threshold >= 0.0) {
-        return Err(CoreError::param("threshold", "must be a finite number >= 0"));
+        return Err(CoreError::param(
+            "threshold",
+            "must be a finite number >= 0",
+        ));
     }
     let subset = match verts {
         Some(v) => {

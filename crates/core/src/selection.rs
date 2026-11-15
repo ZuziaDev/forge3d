@@ -86,7 +86,12 @@ impl ElementSelection {
     }
 
     /// Combine `indices` into the set of `kind` according to `action`.
-    pub fn apply(&mut self, kind: ElementKind, indices: impl IntoIterator<Item = u32>, action: SelectAction) {
+    pub fn apply(
+        &mut self,
+        kind: ElementKind,
+        indices: impl IntoIterator<Item = u32>,
+        action: SelectAction,
+    ) {
         let set = self.set_mut(kind);
         match action {
             SelectAction::Set => {
@@ -108,7 +113,11 @@ impl ElementSelection {
 
     /// Drop indices that do not exist in `mesh`.
     pub fn prune(&mut self, mesh: &Mesh) {
-        let (nv, ne, nf) = (mesh.vertex_count() as u32, mesh.edge_count() as u32, mesh.face_count() as u32);
+        let (nv, ne, nf) = (
+            mesh.vertex_count() as u32,
+            mesh.edge_count() as u32,
+            mesh.face_count() as u32,
+        );
         self.vertices.retain(|&v| v < nv);
         self.edges.retain(|&e| e < ne);
         self.faces.retain(|&f| f < nf);
@@ -151,7 +160,11 @@ impl ElementSelection {
         if !self.vertices.is_empty() {
             return mesh
                 .edge_ids()
-                .filter(|&e| mesh.edge_vertices(e).iter().all(|v| self.vertices.contains(&v.0)))
+                .filter(|&e| {
+                    mesh.edge_vertices(e)
+                        .iter()
+                        .all(|v| self.vertices.contains(&v.0))
+                })
                 .collect();
         }
         Vec::new()
@@ -294,13 +307,15 @@ impl Selection {
         if self.active.is_some_and(|a| !scene.contains(a)) {
             self.active = self.objects.last().copied();
         }
-        self.elements.retain(|id, sel| match scene.get(*id).and_then(|n| n.mesh.as_ref()) {
-            Some(m) => {
-                sel.prune(m);
-                !sel.is_empty()
-            }
-            None => false,
-        });
+        self.elements.retain(
+            |id, sel| match scene.get(*id).and_then(|n| n.mesh.as_ref()) {
+                Some(m) => {
+                    sel.prune(m);
+                    !sel.is_empty()
+                }
+                None => false,
+            },
+        );
     }
 }
 
@@ -337,7 +352,10 @@ pub fn element_normals(mesh: &Mesh, kind: ElementKind, normal_matrix: Option<Mat
         ElementKind::Face => mesh.face_ids().map(|f| mesh.face_normal(f)).collect(),
     };
     match normal_matrix {
-        Some(m) => raw.into_iter().map(|n| (m * n).normalize_or_zero()).collect(),
+        Some(m) => raw
+            .into_iter()
+            .map(|n| (m * n).normalize_or_zero())
+            .collect(),
         None => raw,
     }
 }
@@ -358,7 +376,10 @@ pub fn elements_facing(
 ) -> CoreResult<Vec<u32>> {
     let dir = direction.normalize_or_zero();
     if dir == Vec3::ZERO || !dir.is_finite() {
-        return Err(CoreError::param("direction", "must be a non-zero finite vector"));
+        return Err(CoreError::param(
+            "direction",
+            "must be a non-zero finite vector",
+        ));
     }
     if !(max_angle_deg.is_finite() && (0.0..=180.0).contains(&max_angle_deg)) {
         return Err(CoreError::param("max_angle_deg", "must be in 0..=180"));
@@ -374,7 +395,12 @@ pub fn elements_facing(
 
 /// Elements whose normal is within `max_angle_deg` of the normal of the
 /// `reference` element (select similar: normal).
-pub fn elements_similar_normal(mesh: &Mesh, kind: ElementKind, reference: u32, max_angle_deg: f32) -> CoreResult<Vec<u32>> {
+pub fn elements_similar_normal(
+    mesh: &Mesh,
+    kind: ElementKind,
+    reference: u32,
+    max_angle_deg: f32,
+) -> CoreResult<Vec<u32>> {
     mesh.check_index(kind, reference)?;
     let normals = element_normals(mesh, kind, None);
     let r = normals[reference as usize];
@@ -389,7 +415,12 @@ pub fn elements_similar_normal(mesh: &Mesh, kind: ElementKind, reference: u32, m
 /// Elements entirely inside `aabb` (vertices: the vertex; edges: both
 /// endpoints; faces: all corners). Positions are first mapped by `to_space`
 /// (e.g. the object's world transform for a world-space box).
-pub fn elements_in_box(mesh: &Mesh, kind: ElementKind, aabb: &Aabb, to_space: &Affine3A) -> Vec<u32> {
+pub fn elements_in_box(
+    mesh: &Mesh,
+    kind: ElementKind,
+    aabb: &Aabb,
+    to_space: &Affine3A,
+) -> Vec<u32> {
     let inside: Vec<bool> = mesh
         .vertex_ids()
         .map(|v| aabb.contains(to_space.transform_point3(mesh.position(v))))
@@ -415,6 +446,10 @@ pub fn elements_in_box(mesh: &Mesh, kind: ElementKind, aabb: &Aabb, to_space: &A
 pub fn edge_loop_or_ring(mesh: &Mesh, edge: u32, ring: bool) -> CoreResult<Vec<u32>> {
     mesh.check_index(ElementKind::Edge, edge)?;
     let e = EdgeId(edge);
-    let list = if ring { mesh.edge_ring(e) } else { mesh.edge_loop(e) };
+    let list = if ring {
+        mesh.edge_ring(e)
+    } else {
+        mesh.edge_loop(e)
+    };
     Ok(list.into_iter().map(|e| e.0).collect())
 }

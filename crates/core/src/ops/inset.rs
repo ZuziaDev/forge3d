@@ -19,12 +19,21 @@ const MIN_MITER_COS: f32 = 0.2;
 /// * `individual == true`: every face is inset on its own.
 ///
 /// The inner faces are selected afterwards.
-pub fn inset_faces(mesh: &Mesh, faces: &[FaceId], thickness: f32, depth: f32, individual: bool) -> CoreResult<OpResult> {
+pub fn inset_faces(
+    mesh: &Mesh,
+    faces: &[FaceId],
+    thickness: f32,
+    depth: f32,
+    individual: bool,
+) -> CoreResult<OpResult> {
     require_nonempty(faces, "faces")?;
     check_faces(mesh, faces)?;
     finite("depth", depth)?;
     if !(thickness.is_finite() && thickness > 0.0) {
-        return Err(CoreError::param("thickness", "must be a positive finite number"));
+        return Err(CoreError::param(
+            "thickness",
+            "must be a positive finite number",
+        ));
     }
     let mut sel = vec![false; mesh.face_count()];
     for f in faces {
@@ -76,7 +85,8 @@ fn inset_individual(mesh: &Mesh, selected: &[FaceId], thickness: f32, depth: f32
         }
         for i in 0..k {
             let j = (i + 1) % k;
-            soup.faces.push(vec![verts[i], verts[j], inner[j], inner[i]]);
+            soup.faces
+                .push(vec![verts[i], verts[j], inner[j], inner[i]]);
         }
         soup.faces[f.index()] = inner;
     }

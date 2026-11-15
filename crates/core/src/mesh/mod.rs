@@ -149,7 +149,7 @@ pub struct MeshData {
 }
 
 /// Half-edge mesh. See the module documentation for the design.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(into = "MeshData", try_from = "MeshData")]
 pub struct Mesh {
     pub(crate) vertices: Vec<Vertex>,
@@ -159,6 +159,12 @@ pub struct Mesh {
     /// CSR offsets: edges of vertex `v` are `vert_edges[vert_edge_start[v]..vert_edge_start[v+1]]`.
     pub(crate) vert_edge_start: Vec<u32>,
     pub(crate) vert_edges: Vec<EdgeId>,
+}
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Mesh::new()
+    }
 }
 
 impl From<Mesh> for MeshData {
@@ -178,8 +184,12 @@ impl Mesh {
     /// Empty mesh.
     pub fn new() -> Self {
         Mesh {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            loops: Vec::new(),
+            faces: Vec::new(),
             vert_edge_start: vec![0],
-            ..Default::default()
+            vert_edges: Vec::new(),
         }
     }
 
@@ -460,7 +470,8 @@ impl Mesh {
     }
     /// Vertices of a face in winding order.
     pub fn face_vertices(&self, f: FaceId) -> impl Iterator<Item = VertexId> + '_ {
-        self.face_loops(f).map(move |l| self.loops[l.index()].vertex)
+        self.face_loops(f)
+            .map(move |l| self.loops[l.index()].vertex)
     }
     /// Edges of a face in winding order (edge i goes from corner i to i+1).
     pub fn face_edges(&self, f: FaceId) -> impl Iterator<Item = EdgeId> + '_ {

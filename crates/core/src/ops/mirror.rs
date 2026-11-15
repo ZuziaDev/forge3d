@@ -14,7 +14,10 @@ use super::loose_mask;
 /// faces lying in the plane (which would become internal) are removed.
 pub fn mirror(mesh: &Mesh, axis: Axis, merge: bool, threshold: f32) -> CoreResult<Mesh> {
     if !(threshold.is_finite() && threshold >= 0.0) {
-        return Err(CoreError::param("merge_threshold", "must be a finite number >= 0"));
+        return Err(CoreError::param(
+            "merge_threshold",
+            "must be a finite number >= 0",
+        ));
     }
     let ax = axis.index();
     let n = mesh.vertex_count() as u32;
