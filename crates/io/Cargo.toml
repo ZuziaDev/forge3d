@@ -1,0 +1,19 @@
+[package]
+name = "forge3d-io"
+description = "File import/export for forge3d: glTF/GLB, OBJ, STL and the native .f3d project format"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+forge3d-core.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+gltf = { version = "1", default-features = false, features = ["utils", "names", "extras", "KHR_materials_emissive_strength"] }
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
