@@ -26,9 +26,6 @@ use crate::error::AppError;
 use crate::gizmo::{DragDelta, GizmoDrag, GizmoMode, Handle};
 use crate::target::GizmoTarget;
 
-/// Key of the preview used by gizmo drags.
-const GIZMO_KEY: &str = "gizmo";
-
 /// Severity of a status message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusKind {
@@ -76,9 +73,18 @@ struct Preview {
     seq: u64,
 }
 
+/// A running gizmo drag. The live preview is applied to a scratch copy of
+/// the document (through the same command API); the real document gets a
+/// single command when the drag ends, and nothing at all when it is cancelled.
 struct ActiveDrag {
     drag: GizmoDrag,
     target: GizmoTarget,
+    scratch: Document,
+    /// The scratch document currently holds the preview command.
+    applied: bool,
+    /// Revision of the real document at drag start.
+    base_revision: u64,
+    serial: u64,
 }
 
 /// Kinds of the file dialog window.
@@ -172,6 +178,7 @@ pub struct AppState {
     drag: Option<ActiveDrag>,
     hovered: Option<Handle>,
     picks: Vec<PickRequest>,
+    drag_serial: u64,
 }
 
 impl AppState {
@@ -199,6 +206,7 @@ impl AppState {
             drag: None,
             hovered: None,
             picks: Vec::new(),
+            drag_serial: 0,
         };
         s.frame(false);
         s
@@ -349,16 +357,6 @@ impl AppState {
         }
     }
 
-    /// Undo the preview (if it is still the newest entry) and forget it.
-    fn discard_preview(&mut self) {
-        if self.preview_is_top() {
-            if let Err(e) = self.doc.undo() {
-                self.report_core(&e);
-            }
-        }
-        self.preview = None;
-    }
-
     /// Finish the current preview series; its entry stays in the history.
     pub fn commit_preview(&mut self) {
         self.preview = None;
@@ -417,18 +415,13 @@ impl AppState {
     /// or whose preview was buried end, dangling UI references are dropped.
     pub fn sync_external(&mut self) {
         if let Some(d) = &self.drag {
-            let ok = d.target.is_valid(&self.doc)
-                && (self.preview.is_none() || self.preview_is_top());
-            if !ok {
+            if d.base_revision != self.doc.revision() || !d.target.is_valid(&self.doc) {
                 self.drag = None;
-                self.preview = None;
-                self.status = Status::info("Drag ended: the scene was changed externally");
+                self.status = Status::info("Drag cancelled: the scene was changed externally");
             }
         }
-        if let Some(p) = &self.preview {
-            if p.key != GIZMO_KEY && !self.preview_is_top() {
-                self.preview = None;
-            }
+        if self.preview.is_some() && !self.preview_is_top() {
+            self.preview = None;
         }
         if let Some((id, _)) = &self.ui.renaming {
             if !self.doc.scene.contains(*id) {
@@ -479,7 +472,8 @@ impl AppState {
         let active = self.doc.selection.active();
         let Some(hit) = hit else {
             if !shift {
-                self.run(CommandSpec::SelectNone { object: active });
+                let object = (mode != SelectMode::Object).then_some(active).flatten();
+                self.run(CommandSpec::SelectNone { object });
             }
             return;
         };
@@ -721,9 +715,24 @@ impl AppState {
 
     // ----- gizmo ------------------------------------------------------------
 
+    /// The document to display and pick against: the scratch copy holding
+    /// the live preview while a gizmo drag runs, the real document otherwise.
+    pub fn display_doc(&self) -> &Document {
+        self.drag.as_ref().map_or(&self.doc, |d| &d.scratch)
+    }
+
+    /// Cache key for the renderer matching [`AppState::display_doc`].
+    pub fn display_revision(&self) -> u64 {
+        match &self.drag {
+            Some(d) => (1 << 62) | (d.serial << 24) | (d.scratch.revision() & 0xff_ffff),
+            None => self.doc.revision(),
+        }
+    }
+
     /// Current gizmo target (None when nothing transformable is selected).
+    /// While dragging it follows the live preview.
     pub fn gizmo_target(&self) -> Option<GizmoTarget> {
-        GizmoTarget::compute(&self.doc)
+        GizmoTarget::compute(self.display_doc())
     }
 
     pub fn hovered_handle(&self) -> Option<Handle> {
@@ -746,28 +755,33 @@ impl AppState {
     /// Start dragging `handle` of the current gizmo. `cursor` is in
     /// viewport points.
     pub fn begin_gizmo_drag(&mut self, handle: Handle, cursor: Vec2) -> bool {
-        let Some(target) = self.gizmo_target() else {
+        self.end_interactions();
+        let Some(target) = GizmoTarget::compute(&self.doc) else {
             return false;
         };
-        self.end_interactions();
         let frame = target.frame(self.tool);
         let cam = self.camera.to_camera();
         let drag = GizmoDrag::begin(self.tool, handle, frame, &cam, self.viewport, cursor);
-        self.drag = Some(ActiveDrag { drag, target });
+        self.drag_serial += 1;
+        self.drag = Some(ActiveDrag {
+            drag,
+            target,
+            scratch: Document::from_state(self.doc.state()),
+            applied: false,
+            base_revision: self.doc.revision(),
+            serial: self.drag_serial,
+        });
         true
     }
 
-    /// Update the running drag; applies the live preview command. Returns
-    /// false when the drag ended (target vanished, command failed).
+    /// Update the running drag and its live preview. Returns false when the
+    /// drag ended (target vanished or the scene was changed externally).
     pub fn update_gizmo_drag(&mut self, cursor: Vec2, snap: bool) -> bool {
         let Some(mut active) = self.drag.take() else {
             return false;
         };
-        if !active.target.is_valid(&self.doc)
-            || (self.preview.is_some() && !self.preview_is_top())
-        {
-            self.preview = None;
-            self.status = Status::info("Drag ended: the scene was changed externally");
+        if active.base_revision != self.doc.revision() || !active.target.is_valid(&self.doc) {
+            self.status = Status::info("Drag cancelled: the scene was changed externally");
             return false;
         }
         let cam = self.camera.to_camera();
@@ -775,34 +789,46 @@ impl AppState {
         let delta: DragDelta = active
             .drag
             .update(&cam, self.viewport, cursor, snap, snap_step);
-        let ok = if delta.is_identity() {
-            // Back at the start: remove the preview so nothing is committed.
-            self.discard_preview();
-            true
-        } else {
-            self.preview(GIZMO_KEY, active.target.spec(delta))
-        };
-        if ok {
-            self.drag = Some(active);
-        } else {
-            self.preview = None;
+        if active.applied {
+            if let Err(e) = active.scratch.undo() {
+                self.report_core(&e);
+                return false;
+            }
+            active.applied = false;
         }
-        ok
+        if !delta.is_identity() {
+            if let Err(e) = active
+                .scratch
+                .execute_spec(active.target.spec(delta), Origin::Gui)
+            {
+                self.report_core(&e);
+                return false;
+            }
+            active.applied = true;
+        }
+        self.drag = Some(active);
+        true
     }
 
-    /// Finish the drag, keeping its single history entry. Returns whether
-    /// the drag changed anything.
+    /// Finish the drag: the real document receives one command with the
+    /// accumulated transform. Returns whether anything was committed.
     pub fn end_gizmo_drag(&mut self) -> bool {
-        let changed = self.preview.is_some();
-        self.drag = None;
-        self.preview = None;
-        changed
+        let Some(active) = self.drag.take() else {
+            return false;
+        };
+        if !active.applied {
+            return false;
+        }
+        if active.base_revision != self.doc.revision() || !active.target.is_valid(&self.doc) {
+            self.status = Status::info("Drag cancelled: the scene was changed externally");
+            return false;
+        }
+        self.run(active.target.spec(active.drag.delta()))
     }
 
-    /// Abort the drag and restore the original state (Escape).
+    /// Abort the drag; the real document was never touched (Escape).
     pub fn cancel_drag(&mut self) {
         if self.drag.take().is_some() {
-            self.discard_preview();
             self.status = Status::info("Cancelled");
         }
     }
@@ -937,5 +963,373 @@ impl AppState {
         let rep = self.doc.scene.get(id)?.mesh.as_ref()?.validate();
         self.ui.validation = Some((id, rev, rep.clone()));
         Some(rep)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gizmo::{self, hit_test};
+
+    fn cube_state() -> (AppState, Uuid) {
+        let mut st = AppState::new(Document::new());
+        assert!(st.run(create_primitive(PrimitiveSpec::Cube { size: 2.0 })));
+        let id = st.doc.selection.active().unwrap();
+        (st, id)
+    }
+
+    fn screen(st: &AppState, p: Vec3) -> Vec2 {
+        gizmo::project(&st.camera.to_camera(), p, st.viewport).unwrap()
+    }
+
+    fn handle_point(st: &AppState, axis: usize) -> Vec2 {
+        let t = st.gizmo_target().unwrap();
+        let frame = t.frame(st.tool);
+        let len = gizmo::axis_length(&st.camera.to_camera(), &frame, st.viewport);
+        screen(st, frame.origin + frame.axes[axis] * len * 0.5)
+    }
+
+    fn applied(st: &AppState) -> usize {
+        st.doc.history_list().iter().filter(|e| !e.undone).count()
+    }
+
+    #[test]
+    fn translate_drag_is_one_history_entry_and_undo_restores_exactly() {
+        let (mut st, id) = cube_state();
+        let before = st.doc.state();
+        let entries = applied(&st);
+        let start = handle_point(&st, 0);
+        let h = hit_test(
+            st.tool,
+            &st.gizmo_target().unwrap().frame(st.tool),
+            &st.camera.to_camera(),
+            st.viewport,
+            start,
+        );
+        assert_eq!(h, Some(Handle::Axis(0)));
+        assert!(st.begin_gizmo_drag(h.unwrap(), start));
+        for k in 1..=12 {
+            let p = start + Vec2::new(k as f32 * 7.0, k as f32 * 1.5);
+            assert!(st.update_gizmo_drag(p, false));
+        }
+        assert!(st.end_gizmo_drag());
+        assert_eq!(applied(&st), entries + 1, "exactly one entry for the drag");
+        let moved = st.doc.scene.world_transform(id).unwrap().translation;
+        assert!(moved.x.abs() > 0.1 && moved.y.abs() < 1e-5 && moved.z.abs() < 1e-5);
+        st.undo();
+        assert_eq!(st.doc.state(), before, "undo restores the original state exactly");
+        assert_eq!(st.doc.history_list().iter().filter(|e| !e.undone).count(), entries);
+    }
+
+    #[test]
+    fn rotate_and_scale_drags_commit_once() {
+        let (mut st, id) = cube_state();
+        let before = st.doc.state();
+        // rotate around Z using the ring point nearest the camera
+        st.perform(Action::SetTool(GizmoMode::Rotate));
+        let cam = st.camera.to_camera();
+        let frame = st.gizmo_target().unwrap().frame(st.tool);
+        let r = gizmo::axis_length(&cam, &frame, st.viewport) * 0.85;
+        let toward = (cam.eye - frame.origin).truncate().normalize();
+        let a = Vec3::new(toward.x, toward.y, 0.0);
+        let b = Vec3::new(-toward.y, toward.x, 0.0);
+        let p0 = screen(&st, a * r);
+        let h = hit_test(st.tool, &frame, &cam, st.viewport, p0).unwrap();
+        assert_eq!(h, Handle::Axis(2));
+        let n = applied(&st);
+        assert!(st.begin_gizmo_drag(h, p0));
+        for k in 1..=5 {
+            let ang = k as f32 * 0.15;
+            let p = screen(&st, (a * ang.cos() + b * ang.sin()) * r);
+            assert!(st.update_gizmo_drag(p, false));
+        }
+        st.end_gizmo_drag();
+        assert_eq!(applied(&st), n + 1);
+        let (_, rot, _) = st
+            .doc
+            .scene
+            .get(id)
+            .unwrap()
+            .transform
+            .to_scale_rotation_translation();
+        assert!(rot.to_axis_angle().1.abs() > 0.3);
+
+        // scale along X
+        st.perform(Action::SetTool(GizmoMode::Scale));
+        let frame = st.gizmo_target().unwrap().frame(st.tool);
+        let cam = st.camera.to_camera();
+        let len = gizmo::axis_length(&cam, &frame, st.viewport);
+        let p0 = screen(&st, frame.origin + frame.axes[0] * len * 0.9);
+        let h = hit_test(st.tool, &frame, &cam, st.viewport, p0).unwrap();
+        assert_eq!(h, Handle::Axis(0));
+        let n = applied(&st);
+        assert!(st.begin_gizmo_drag(h, p0));
+        let p1 = screen(&st, frame.origin + frame.axes[0] * len * 1.8);
+        assert!(st.update_gizmo_drag(p1, false));
+        st.end_gizmo_drag();
+        assert_eq!(applied(&st), n + 1);
+        st.undo();
+        st.undo();
+        assert_eq!(st.doc.state(), before);
+    }
+
+    #[test]
+    fn escape_cancels_a_drag_without_leaving_history() {
+        let (mut st, _id) = cube_state();
+        let before = st.doc.state();
+        let n = applied(&st);
+        let start = handle_point(&st, 1);
+        assert!(st.begin_gizmo_drag(Handle::Axis(1), start));
+        assert!(st.update_gizmo_drag(start + Vec2::new(30.0, -20.0), false));
+        assert_eq!(st.doc.state(), before, "the real document is untouched during the drag");
+        assert_ne!(st.display_doc().state(), before, "the preview shows the move");
+        st.perform(Action::Cancel);
+        assert!(!st.is_dragging());
+        assert_eq!(st.doc.state(), before);
+        assert_eq!(applied(&st), n);
+        assert_eq!(st.doc.history_list().len(), n, "nothing is left on the redo stack");
+        assert!(!st.doc.can_redo());
+    }
+
+    #[test]
+    fn dragging_back_to_the_start_commits_nothing() {
+        let (mut st, _id) = cube_state();
+        let n = st.doc.history_list().len();
+        let start = handle_point(&st, 0);
+        assert!(st.begin_gizmo_drag(Handle::Axis(0), start));
+        assert!(st.update_gizmo_drag(start + Vec2::new(40.0, 0.0), false));
+        assert!(st.update_gizmo_drag(start, false));
+        assert!(!st.end_gizmo_drag());
+        assert_eq!(st.doc.history_list().len(), n);
+    }
+
+    #[test]
+    fn element_drag_uses_transform_elements_once() {
+        let (mut st, id) = cube_state();
+        st.perform(Action::SetMode(SelectMode::Face));
+        st.run(CommandSpec::SelectElements {
+            object: Some(id),
+            kind: Some(ElementKind::Face),
+            indices: vec![0],
+            action: SelectAction::Set,
+        });
+        let before = st.doc.state();
+        let n = applied(&st);
+        let target = st.gizmo_target().unwrap();
+        assert!(matches!(target.kind, crate::target::TargetKind::Elements { .. }));
+        let start = handle_point(&st, 2);
+        assert!(st.begin_gizmo_drag(Handle::Axis(2), start));
+        for k in 1..=6 {
+            assert!(st.update_gizmo_drag(start + Vec2::new(0.0, -(k as f32) * 6.0), false));
+        }
+        st.end_gizmo_drag();
+        assert_eq!(applied(&st), n + 1);
+        let mesh = st.doc.scene.mesh(id).unwrap();
+        let bb_before = before.scene.get(id).unwrap().mesh.as_ref().unwrap();
+        assert_ne!(mesh.positions(), bb_before.positions());
+        assert_eq!(mesh.vertex_count(), 8, "topology unchanged");
+        st.undo();
+        assert_eq!(st.doc.state(), before);
+    }
+
+    #[test]
+    fn external_delete_during_a_drag_ends_it_cleanly() {
+        let (mut st, id) = cube_state();
+        let start = handle_point(&st, 0);
+        assert!(st.begin_gizmo_drag(Handle::Axis(0), start));
+        assert!(st.update_gizmo_drag(start + Vec2::new(25.0, 0.0), false));
+        // an AI deletes the object behind the GUI's back
+        st.doc
+            .execute_spec(
+                CommandSpec::DeleteObjects {
+                    objects: Some(vec![id]),
+                    keep_children: false,
+                },
+                Origin::Ai,
+            )
+            .unwrap();
+        st.sync_external();
+        assert!(!st.is_dragging());
+        assert!(!st.update_gizmo_drag(start + Vec2::new(50.0, 0.0), false));
+        assert!(st.doc.scene.is_empty());
+        assert!(st.gizmo_target().is_none());
+        // the history is still usable
+        st.undo();
+        st.undo();
+        assert!(st.doc.scene.contains(id) || st.doc.scene.is_empty());
+    }
+
+    #[test]
+    fn foreign_command_between_updates_keeps_both_changes_consistent() {
+        let (mut st, id) = cube_state();
+        let start = handle_point(&st, 0);
+        assert!(st.begin_gizmo_drag(Handle::Axis(0), start));
+        assert!(st.update_gizmo_drag(start + Vec2::new(25.0, 0.0), false));
+        st.doc
+            .execute_spec(
+                CommandSpec::RenameObject {
+                    object: Some(id),
+                    name: "Renamed".into(),
+                },
+                Origin::Ai,
+            )
+            .unwrap();
+        // The next update notices the foreign change and cancels the drag
+        // instead of committing a stale preview.
+        assert!(!st.update_gizmo_drag(start + Vec2::new(60.0, 0.0), false));
+        assert!(!st.is_dragging());
+        assert!(!st.end_gizmo_drag());
+        assert_eq!(st.doc.scene.get(id).unwrap().name, "Renamed");
+        let moved = st.doc.scene.world_transform(id).unwrap().translation.x;
+        assert!(moved.abs() < 1e-6, "the cancelled drag left no trace");
+    }
+
+    #[test]
+    fn property_edits_coalesce_per_interaction() {
+        let (mut st, id) = cube_state();
+        let before = st.doc.state();
+        let n = applied(&st);
+        for k in 1..=10 {
+            assert!(st.preview_transform(id, Some([k as f32 * 0.1, 0.0, 0.0]), None, None));
+            st.end_frame(true); // mouse still down
+        }
+        assert_eq!(applied(&st), n + 1);
+        st.end_frame(false); // released: interaction over
+        assert!(st.preview_transform(id, Some([0.0, 2.0, 0.0]), None, None));
+        st.end_frame(false);
+        assert_eq!(applied(&st), n + 2, "a new interaction is a new entry");
+        st.undo();
+        st.undo();
+        assert_eq!(st.doc.state(), before);
+        // material edits too
+        let mut m = Material::default();
+        for k in 1..=5 {
+            m.roughness = k as f32 * 0.1;
+            assert!(st.preview_material(id, m.clone()));
+        }
+        assert_eq!(applied(&st), n + 1);
+    }
+
+    fn hit(node: Uuid, face: u32, vertex: u32, edge: u32) -> PickHit {
+        PickHit {
+            node_id: node,
+            face,
+            vertex,
+            edge,
+            position: [0.0; 3],
+            distance: 1.0,
+        }
+    }
+
+    #[test]
+    fn picking_maps_to_selection_commands_per_mode() {
+        let (mut st, a) = cube_state();
+        st.run(create_primitive(PrimitiveSpec::Cube { size: 1.0 }));
+        let b = st.doc.selection.active().unwrap();
+        // object mode
+        st.apply_pick(Some(hit(a, 1, 0, 0)), false);
+        assert_eq!(st.doc.selection.objects(), &[a]);
+        st.apply_pick(Some(hit(b, 1, 0, 0)), true);
+        assert_eq!(st.doc.selection.objects(), &[a, b]);
+        assert_eq!(st.doc.selection.active(), Some(b));
+        st.apply_pick(Some(hit(a, 1, 0, 0)), true); // selected, not active -> make active
+        assert_eq!(st.doc.selection.active(), Some(a));
+        st.apply_pick(Some(hit(a, 1, 0, 0)), true); // active -> deselect
+        assert_eq!(st.doc.selection.objects(), &[b]);
+        st.apply_pick(None, true);
+        assert_eq!(st.doc.selection.objects(), &[b], "shift on empty keeps selection");
+        st.apply_pick(None, false);
+        assert!(st.doc.selection.objects().is_empty());
+        // element modes
+        st.apply_pick(Some(hit(a, 2, 3, 4)), false);
+        st.perform(Action::SetMode(SelectMode::Face));
+        st.apply_pick(Some(hit(a, 2, 3, 4)), false);
+        assert!(st.doc.selection.elements(a).unwrap().faces.contains(&2));
+        st.apply_pick(Some(hit(a, 5, 3, 4)), true);
+        assert_eq!(st.doc.selection.elements(a).unwrap().faces.len(), 2);
+        st.apply_pick(Some(hit(a, 5, 3, 4)), true); // toggle off
+        assert_eq!(st.doc.selection.elements(a).unwrap().faces.len(), 1);
+        st.perform(Action::SetMode(SelectMode::Edge));
+        st.apply_pick(Some(hit(a, 5, 3, 7)), false);
+        assert!(st.doc.selection.elements(a).unwrap().edges.contains(&7));
+        st.perform(Action::SetMode(SelectMode::Vertex));
+        st.apply_pick(Some(hit(a, 5, 6, 7)), false);
+        assert!(st.doc.selection.elements(a).unwrap().vertices.contains(&6));
+        st.apply_pick(Some(hit(b, 0, 0, 0)), false); // other object becomes the edited one
+        assert_eq!(st.doc.selection.active(), Some(b));
+        st.apply_pick(None, false);
+        assert!(st.doc.selection.elements(b).is_none());
+    }
+
+    #[test]
+    fn toggle_edit_mode_remembers_the_element_mode() {
+        let (mut st, _) = cube_state();
+        st.perform(Action::SetMode(SelectMode::Edge));
+        st.perform(Action::ToggleEditMode);
+        assert_eq!(st.doc.selection.mode, SelectMode::Object);
+        st.perform(Action::ToggleEditMode);
+        assert_eq!(st.doc.selection.mode, SelectMode::Edge);
+    }
+
+    #[test]
+    fn errors_become_structured_status_without_panicking() {
+        let (mut st, _) = cube_state();
+        st.perform(Action::MeshTool(MeshTool::LoopCut));
+        assert_eq!(st.status.kind, StatusKind::Error);
+        assert!(st.status.text.starts_with("invalid_action:"), "{}", st.status.text);
+        assert!(st.status.text.contains('\u{2014}'));
+        st.perform(Action::MeshTool(MeshTool::Extrude)); // object mode, no faces
+        assert_eq!(st.status.kind, StatusKind::Error);
+        st.perform(Action::Boolean(BooleanOp::Union));
+        assert_eq!(st.status.kind, StatusKind::Error);
+        st.open_project(Path::new("/definitely/not/here.f3d"));
+        assert_eq!(st.status.kind, StatusKind::Error);
+        st.import_file(Path::new("/definitely/not/here.obj"));
+        assert_eq!(st.status.kind, StatusKind::Error);
+        st.undo();
+        st.undo();
+        st.undo();
+        st.undo();
+        assert_eq!(st.status.kind, StatusKind::Error, "nothing to undo is reported");
+    }
+
+    #[test]
+    fn history_goto_moves_the_cursor() {
+        let (mut st, _) = cube_state();
+        st.run(create_primitive(PrimitiveSpec::Cube { size: 1.0 }));
+        st.run(create_primitive(PrimitiveSpec::Cube { size: 1.0 }));
+        let list = st.doc.history_list();
+        assert_eq!(st.doc.scene.len(), 3);
+        st.history_goto(Some(list[0].seq));
+        assert_eq!(st.doc.scene.len(), 1);
+        st.history_goto(Some(list[2].seq));
+        assert_eq!(st.doc.scene.len(), 3);
+        st.history_goto(None);
+        assert_eq!(st.doc.scene.len(), 0);
+    }
+
+    #[test]
+    fn file_roundtrip_and_dirty_flag() {
+        let dir = std::env::temp_dir().join(format!("forge3d-app-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut st, _) = cube_state();
+        assert!(st.is_dirty());
+        let f3d = dir.join("a.f3d");
+        st.save_project(&f3d);
+        assert!(!st.is_dirty(), "{}", st.status.text);
+        st.run(create_primitive(PrimitiveSpec::Cube { size: 1.0 }));
+        assert!(st.is_dirty());
+        let obj = dir.join("a.obj");
+        st.export_file(&obj);
+        assert!(obj.exists(), "{}", st.status.text);
+        st.import_file(&obj);
+        assert_eq!(st.status.kind, StatusKind::Info, "{}", st.status.text);
+        assert!(st.doc.scene.len() > 2);
+        st.open_project(&f3d);
+        assert_eq!(st.doc.scene.len(), 1);
+        assert!(!st.is_dirty());
+        st.new_document();
+        assert!(st.doc.scene.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
