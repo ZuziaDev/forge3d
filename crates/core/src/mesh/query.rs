@@ -117,7 +117,9 @@ impl Mesh {
 
     /// All boundary edges.
     pub fn boundary_edges(&self) -> Vec<EdgeId> {
-        self.edge_ids().filter(|&e| self.is_boundary_edge(e)).collect()
+        self.edge_ids()
+            .filter(|&e| self.is_boundary_edge(e))
+            .collect()
     }
 
     /// True when every edge has exactly two faces (no holes, no non-manifold edges).
@@ -230,7 +232,10 @@ impl Mesh {
     /// Edge ring through `e`: walks across quads to the opposite edge in both
     /// directions. Ordered along the ring.
     pub fn edge_ring(&self, e: EdgeId) -> Vec<EdgeId> {
-        self.edge_ring_loops(e).into_iter().map(|l| self.loop_edge(l)).collect()
+        self.edge_ring_loops(e)
+            .into_iter()
+            .map(|l| self.loop_edge(l))
+            .collect()
     }
 
     /// Ring walk returning, per ring edge, one loop on it. Consecutive loops

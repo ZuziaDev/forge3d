@@ -51,7 +51,9 @@ pub mod prelude {
     pub use crate::document::{Document, DocumentState, HistoryEntryInfo};
     pub use crate::error::{CoreError, CoreResult, ErrorReport};
     pub use crate::math::{Aabb, Axis, Space};
-    pub use crate::mesh::{EdgeId, ElementKind, FaceId, LoopId, Mesh, MeshData, ValidationReport, VertexId};
+    pub use crate::mesh::{
+        EdgeId, ElementKind, FaceId, LoopId, Mesh, MeshData, ValidationReport, VertexId,
+    };
     pub use crate::ops::BooleanOp;
     pub use crate::primitives::PrimitiveSpec;
     pub use crate::scene::{Material, Node, Scene};

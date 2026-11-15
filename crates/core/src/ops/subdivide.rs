@@ -68,7 +68,8 @@ fn cc_step(mesh: &Mesh) -> CoreResult<Mesh> {
         let np = if creases.is_empty() {
             let n = edges.len() as f32;
             let faces = mesh.vertex_faces(v);
-            let f_avg = faces.iter().map(|f| face_pts[f.index()]).sum::<Vec3>() / faces.len() as f32;
+            let f_avg =
+                faces.iter().map(|f| face_pts[f.index()]).sum::<Vec3>() / faces.len() as f32;
             let r_avg = edges.iter().map(|&e| mesh.edge_midpoint(e)).sum::<Vec3>() / n;
             (f_avg + 2.0 * r_avg + (n - 3.0) * p) / n
         } else if creases.len() == 2 && edges.len() > 2 {

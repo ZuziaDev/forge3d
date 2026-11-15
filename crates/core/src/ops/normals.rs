@@ -52,7 +52,11 @@ pub fn recalculate_normals(mesh: &Mesh, inside: bool) -> CoreResult<Mesh> {
     for comp in &components {
         let pts: Vec<DVec3> = comp
             .iter()
-            .flat_map(|f| polys[f.index()].iter().map(|&v| positions[v as usize].as_dvec3()))
+            .flat_map(|f| {
+                polys[f.index()]
+                    .iter()
+                    .map(|&v| positions[v as usize].as_dvec3())
+            })
             .collect();
         let c = pts.iter().copied().sum::<DVec3>() / pts.len().max(1) as f64;
         let mut vol = 0.0f64;

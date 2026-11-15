@@ -18,7 +18,12 @@ use crate::selection::ElementSelection;
 /// get side walls (extruding a plane produces an open box).
 ///
 /// The extruded (moved) faces are selected afterwards.
-pub fn extrude_faces(mesh: &Mesh, faces: &[FaceId], distance: f32, offset: Option<Vec3>) -> CoreResult<OpResult> {
+pub fn extrude_faces(
+    mesh: &Mesh,
+    faces: &[FaceId],
+    distance: f32,
+    offset: Option<Vec3>,
+) -> CoreResult<OpResult> {
     require_nonempty(faces, "faces")?;
     check_faces(mesh, faces)?;
     finite("distance", distance)?;

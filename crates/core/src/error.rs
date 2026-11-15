@@ -15,7 +15,7 @@ pub type CoreResult<T> = Result<T, CoreError>;
 
 /// All errors produced by `forge3d-core`.
 #[derive(Debug, Clone, PartialEq, thiserror::Error, Serialize, Deserialize)]
-#[serde(tag = "error", rename_all = "snake_case")]
+#[serde(tag = "error", content = "details", rename_all = "snake_case")]
 pub enum CoreError {
     /// A node id does not exist in the scene.
     #[error("node {0} not found")]

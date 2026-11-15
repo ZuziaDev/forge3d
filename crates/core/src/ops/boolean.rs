@@ -149,10 +149,16 @@ fn split_polygon(
                 }
             }
             if f.len() >= 3 {
-                front.push(Poly { v: f, plane: poly.plane });
+                front.push(Poly {
+                    v: f,
+                    plane: poly.plane,
+                });
             }
             if b.len() >= 3 {
-                back.push(Poly { v: b, plane: poly.plane });
+                back.push(Poly {
+                    v: b,
+                    plane: poly.plane,
+                });
             }
         }
     }
@@ -275,14 +281,20 @@ impl Bsp {
     }
 
     fn all_polygons(&self) -> Vec<Poly> {
-        self.nodes.iter().flat_map(|n| n.polys.iter().cloned()).collect()
+        self.nodes
+            .iter()
+            .flat_map(|n| n.polys.iter().cloned())
+            .collect()
     }
 }
 
 /// Is the polygon planar (within tolerance) and convex?
 fn planar_convex(pts: &[DVec3], plane: &Plane) -> bool {
     let n = pts.len();
-    if pts.iter().any(|p| (plane.n.dot(*p) - plane.w).abs() > PLANE_EPS) {
+    if pts
+        .iter()
+        .any(|p| (plane.n.dot(*p) - plane.w).abs() > PLANE_EPS)
+    {
         return false;
     }
     (0..n).all(|i| {
@@ -297,7 +309,10 @@ fn mesh_polys(mesh: &Mesh, center: Vec3, inv_scale: f64) -> Vec<Poly> {
     let to = |p: Vec3| (p - center).as_dvec3() * inv_scale;
     let mut out = Vec::with_capacity(mesh.face_count());
     for f in mesh.face_ids() {
-        let pts: Vec<DVec3> = mesh.face_vertices(f).map(|v| to(mesh.position(v))).collect();
+        let pts: Vec<DVec3> = mesh
+            .face_vertices(f)
+            .map(|v| to(mesh.position(v)))
+            .collect();
         let Some(poly) = Poly::new(pts.clone()) else {
             continue;
         };
@@ -447,7 +462,9 @@ fn fix_t_junctions(positions: &[DVec3], faces: Vec<Vec<u32>>) -> Vec<Vec<u32>> {
             used[v as usize] = true;
         }
     }
-    let mut order: Vec<u32> = (0..positions.len() as u32).filter(|&v| used[v as usize]).collect();
+    let mut order: Vec<u32> = (0..positions.len() as u32)
+        .filter(|&v| used[v as usize])
+        .collect();
     order.sort_by(|&a, &b| positions[a as usize].x.total_cmp(&positions[b as usize].x));
     let xs: Vec<f64> = order.iter().map(|&i| positions[i as usize].x).collect();
     let eps = WELD_EPS * 2.0;

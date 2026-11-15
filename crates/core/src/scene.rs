@@ -58,7 +58,10 @@ impl Material {
     pub fn validate(&self) -> CoreResult<()> {
         let in01 = |v: f32| v.is_finite() && (0.0..=1.0).contains(&v);
         if !self.base_color.iter().all(|&c| in01(c)) {
-            return Err(CoreError::param("base_color", "components must be in 0..=1"));
+            return Err(CoreError::param(
+                "base_color",
+                "components must be in 0..=1",
+            ));
         }
         if !in01(self.metallic) {
             return Err(CoreError::param("metallic", "must be in 0..=1"));
@@ -67,7 +70,10 @@ impl Material {
             return Err(CoreError::param("roughness", "must be in 0..=1"));
         }
         if !self.emissive.iter().all(|&c| c.is_finite() && c >= 0.0) {
-            return Err(CoreError::param("emissive", "components must be finite and >= 0"));
+            return Err(CoreError::param(
+                "emissive",
+                "components must be finite and >= 0",
+            ));
         }
         Ok(())
     }
@@ -167,7 +173,10 @@ impl From<Scene> for SceneData {
         let mut nodes = s.nodes;
         SceneData {
             roots: s.roots,
-            nodes: order.into_iter().filter_map(|id| nodes.remove(&id)).collect(),
+            nodes: order
+                .into_iter()
+                .filter_map(|id| nodes.remove(&id))
+                .collect(),
         }
     }
 }
@@ -229,7 +238,10 @@ impl Scene {
     }
     /// Mutable mesh of a node.
     pub fn mesh_mut(&mut self, id: Uuid) -> CoreResult<&mut Mesh> {
-        self.node_mut(id)?.mesh.as_mut().ok_or(CoreError::NoMesh(id))
+        self.node_mut(id)?
+            .mesh
+            .as_mut()
+            .ok_or(CoreError::NoMesh(id))
     }
     /// Iterate all nodes (arbitrary order).
     pub fn nodes(&self) -> impl Iterator<Item = &Node> {
@@ -295,7 +307,10 @@ impl Scene {
             m = n.transform * m;
             guard += 1;
             if guard > self.nodes.len() {
-                return Err(CoreError::HierarchyCycle { child: id, parent: p });
+                return Err(CoreError::HierarchyCycle {
+                    child: id,
+                    parent: p,
+                });
             }
         }
         Ok(m)
@@ -320,7 +335,13 @@ impl Scene {
             return base.to_string();
         }
         let stem = match base.rsplit_once('.') {
-            Some((s, suffix)) if !s.is_empty() && suffix.len() == 3 && suffix.chars().all(|c| c.is_ascii_digit()) => s,
+            Some((s, suffix))
+                if !s.is_empty()
+                    && suffix.len() == 3
+                    && suffix.chars().all(|c| c.is_ascii_digit()) =>
+            {
+                s
+            }
             _ => base,
         };
         (1..)
@@ -336,7 +357,12 @@ impl Scene {
     }
 
     /// Add a node at a given position among its siblings.
-    pub fn insert_node(&mut self, mut node: Node, parent: Option<Uuid>, index: Option<usize>) -> CoreResult<Uuid> {
+    pub fn insert_node(
+        &mut self,
+        mut node: Node,
+        parent: Option<Uuid>,
+        index: Option<usize>,
+    ) -> CoreResult<Uuid> {
         if self.nodes.contains_key(&node.id) {
             return Err(CoreError::DuplicateNode(node.id));
         }
@@ -488,7 +514,10 @@ impl Scene {
         }
         for id in self.traverse() {
             if !seen.insert(id) {
-                return Err(CoreError::HierarchyCycle { child: id, parent: id });
+                return Err(CoreError::HierarchyCycle {
+                    child: id,
+                    parent: id,
+                });
             }
         }
         if seen.len() != self.nodes.len() {
@@ -531,7 +560,9 @@ mod tests {
             )
             .unwrap();
         let w = s.world_transform(b).unwrap();
-        assert!(w.translation.abs_diff_eq(glam::Vec3A::new(1.0, 1.0, 0.0), 1e-6));
+        assert!(w
+            .translation
+            .abs_diff_eq(glam::Vec3A::new(1.0, 1.0, 0.0), 1e-6));
         s.set_parent(b, None, true, None).unwrap();
         let w2 = s.world_transform(b).unwrap();
         assert!(w2.abs_diff_eq(w, 1e-6));

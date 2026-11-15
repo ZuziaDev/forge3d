@@ -23,10 +23,16 @@ pub const MAX_LOOP_CUTS: u32 = 64;
 pub fn loop_cut(mesh: &Mesh, edge: EdgeId, cuts: u32, factor: f32) -> CoreResult<OpResult> {
     check_edges(mesh, &[edge])?;
     if !(1..=MAX_LOOP_CUTS).contains(&cuts) {
-        return Err(CoreError::param("cuts", format!("must be in 1..={MAX_LOOP_CUTS}")));
+        return Err(CoreError::param(
+            "cuts",
+            format!("must be in 1..={MAX_LOOP_CUTS}"),
+        ));
     }
     if !(factor.is_finite() && factor > 0.0 && factor < 1.0) {
-        return Err(CoreError::param("factor", "must be strictly between 0 and 1"));
+        return Err(CoreError::param(
+            "factor",
+            "must be strictly between 0 and 1",
+        ));
     }
     // ring edge -> side-0 vertex
     let mut ring: HashMap<EdgeId, VertexId> = HashMap::new();

@@ -74,7 +74,11 @@ impl Mesh {
 
     /// Rebuild keeping faces with `drop[f] == false`; unused vertices are kept
     /// only when `keep_unused(v)` returns true.
-    fn rebuild_filtered(&mut self, drop: &[bool], keep_unused: impl Fn(u32) -> bool) -> CoreResult<Remap> {
+    fn rebuild_filtered(
+        &mut self,
+        drop: &[bool],
+        keep_unused: impl Fn(u32) -> bool,
+    ) -> CoreResult<Remap> {
         let (positions, faces) = self.to_polygons();
         let mut face_remap = vec![REMOVED; faces.len()];
         let mut kept = Vec::with_capacity(faces.len());
