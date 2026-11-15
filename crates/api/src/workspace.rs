@@ -162,7 +162,10 @@ impl Workspace {
                         // Re-check after creation (defends against races with
                         // symlinks created concurrently).
                         let p = parent.canonicalize().map_err(|e| {
-                            ApiError::internal(format!("cannot resolve '{}': {e}", parent.display()))
+                            ApiError::internal(format!(
+                                "cannot resolve '{}': {e}",
+                                parent.display()
+                            ))
                         })?;
                         if !p.starts_with(&self.root) {
                             return Err(deny("it resolves to a location outside the workspace"));

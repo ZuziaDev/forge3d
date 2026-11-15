@@ -19,7 +19,9 @@ pub const MAX_RENDER_SIZE: u32 = 2048;
 impl From<RenderError> for ApiError {
     fn from(e: RenderError) -> Self {
         let hint = match &e {
-            RenderError::NodeNotFound(_) => "Call scene_get for valid object ids/names; `focus` objects must exist.".to_string(),
+            RenderError::NodeNotFound(_) => {
+                "Call scene_get for valid object ids/names; `focus` objects must exist.".to_string()
+            }
             other => other.hint(),
         };
         ApiError::new(e.code(), e.to_string(), hint)
@@ -211,7 +213,9 @@ pub(crate) async fn viewport_render(
     check_size("width", p.width)?;
     check_size("height", p.height)?;
     if !(1..=4).contains(&p.supersample) {
-        return Err(ApiError::invalid_arguments("`supersample` must be in 1..=4"));
+        return Err(ApiError::invalid_arguments(
+            "`supersample` must be in 1..=4",
+        ));
     }
     let camera = p.camera.clone().unwrap_or(CameraParams::Auto {
         view: None,
@@ -254,7 +258,8 @@ pub(crate) async fn viewport_render(
                     fov_y_deg,
                     orthographic,
                 } => {
-                    let mut o = OrbitCamera::new(Vec3::from_array(target), distance, yaw_deg, pitch_deg);
+                    let mut o =
+                        OrbitCamera::new(Vec3::from_array(target), distance, yaw_deg, pitch_deg);
                     o.fov_y_deg = fov_y_deg;
                     o.orthographic = orthographic;
                     CameraSpec::Orbit(o)
@@ -290,7 +295,12 @@ pub(crate) async fn viewport_render(
     let (png, cam) = blocking(move || {
         options.validate()?;
         let cam = spec.resolve(&scene, options.aspect())?;
-        let png = forge3d_render::render_png(&scene, Some(&selection), &CameraSpec::LookAt(cam), &options)?;
+        let png = forge3d_render::render_png(
+            &scene,
+            Some(&selection),
+            &CameraSpec::LookAt(cam),
+            &options,
+        )?;
         Ok((png, cam))
     })
     .await?;

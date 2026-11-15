@@ -170,7 +170,9 @@ impl DocumentHandle {
             let _ = reply_tx.send(f(doc));
         }))?;
         reply_rx.await.map_err(|_| {
-            ApiError::internal("the document job did not complete (it panicked or the document owner shut down)")
+            ApiError::internal(
+                "the document job did not complete (it panicked or the document owner shut down)",
+            )
         })
     }
 
@@ -189,7 +191,9 @@ impl DocumentHandle {
             let _ = reply_tx.send(f(doc));
         }))?;
         reply_rx.recv().map_err(|_| {
-            ApiError::internal("the document job did not complete (it panicked or the document owner shut down)")
+            ApiError::internal(
+                "the document job did not complete (it panicked or the document owner shut down)",
+            )
         })
     }
 }

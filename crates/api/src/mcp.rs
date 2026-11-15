@@ -101,7 +101,10 @@ impl Forge3dMcpServer {
     pub async fn call(&self, name: &str, args: Value) -> Result<CallToolResult, McpError> {
         if !tool_names().contains(&name) {
             let e = ApiError::unknown_tool(name, &tool_names());
-            return Err(McpError::invalid_params(e.message.clone(), Some(e.to_json())));
+            return Err(McpError::invalid_params(
+                e.message.clone(),
+                Some(e.to_json()),
+            ));
         }
         tracing::info!(tool = name, "tool call");
         match self.tools.call_rich(name, args).await {
@@ -146,7 +149,9 @@ impl ServerHandler for Forge3dMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        Ok(ListToolsResult::with_all_items(self.tool_list.as_ref().clone()))
+        Ok(ListToolsResult::with_all_items(
+            self.tool_list.as_ref().clone(),
+        ))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
@@ -189,7 +194,9 @@ impl ServerHandler for Forge3dMcpServer {
         Ok(ListResourceTemplatesResult::with_all_items(vec![
             ResourceTemplate::new(resources::OBJECT_TEMPLATE, "object")
                 .with_title("Scene object")
-                .with_description("One object by id or unique name: transform, material, counts, bounds.")
+                .with_description(
+                    "One object by id or unique name: transform, material, counts, bounds.",
+                )
                 .with_mime_type("application/json"),
         ]))
     }
@@ -216,7 +223,10 @@ impl ServerHandler for Forge3dMcpServer {
             Err(e) if e.code == "resource_not_found" || e.code == "object_not_found" => Err(
                 McpError::resource_not_found(e.message.clone(), Some(e.to_json())),
             ),
-            Err(e) => Err(McpError::internal_error(e.message.clone(), Some(e.to_json()))),
+            Err(e) => Err(McpError::internal_error(
+                e.message.clone(),
+                Some(e.to_json()),
+            )),
         }
     }
 }
@@ -274,8 +284,10 @@ fn unauthorized_response() -> Response {
     let body = serde_json::to_vec(&ApiError::unauthorized().to_json()).expect("serializes");
     let mut resp = Response::new(Body::from(body));
     *resp.status_mut() = StatusCode::UNAUTHORIZED;
-    resp.headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
     resp.headers_mut().insert(
         header::WWW_AUTHENTICATE,
         HeaderValue::from_static("Bearer realm=\"forge3d\""),
@@ -342,21 +354,23 @@ pub fn http_router(
     let mut router = axum::Router::new().nest_service(&path, service);
     if let Some(token) = config.token.clone() {
         let token: Arc<str> = Arc::from(token);
-        router = router.layer(axum::middleware::from_fn(move |req: Request, next: Next| {
-            let token = token.clone();
-            async move {
-                let auth = req
-                    .headers()
-                    .get(header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok());
-                if bearer_matches(auth, &token) {
-                    next.run(req).await
-                } else {
-                    tracing::warn!("rejected HTTP request without a valid bearer token");
-                    unauthorized_response()
+        router = router.layer(axum::middleware::from_fn(
+            move |req: Request, next: Next| {
+                let token = token.clone();
+                async move {
+                    let auth = req
+                        .headers()
+                        .get(header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok());
+                    if bearer_matches(auth, &token) {
+                        next.run(req).await
+                    } else {
+                        tracing::warn!("rejected HTTP request without a valid bearer token");
+                        unauthorized_response()
+                    }
                 }
-            }
-        }));
+            },
+        ));
     }
     Ok(router)
 }
@@ -390,7 +404,10 @@ impl RunningHttpServer {
 }
 
 /// Bind and start the Streamable HTTP server in the background.
-pub async fn start_http(tools: Forge3dTools, config: HttpConfig) -> Result<RunningHttpServer, ServeError> {
+pub async fn start_http(
+    tools: Forge3dTools,
+    config: HttpConfig,
+) -> Result<RunningHttpServer, ServeError> {
     let ct = CancellationToken::new();
     let router = http_router(tools, &config, ct.child_token())?;
     let listener = tokio::net::TcpListener::bind(config.addr).await?;

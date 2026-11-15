@@ -11,10 +11,27 @@ async fn tool_list_has_schemas_for_every_tool() {
     let defs = e.tools.list();
     let names: Vec<&str> = defs.iter().map(|d| d.name).collect();
     for n in [
-        "scene_get", "object_create", "object_transform", "object_delete", "object_duplicate",
-        "object_rename", "object_parent", "mesh_edit", "mesh_select", "mesh_get", "boolean_op",
-        "material_set", "undo", "redo", "history_list", "viewport_render", "file_import",
-        "file_export", "project_save", "project_load", "batch",
+        "scene_get",
+        "object_create",
+        "object_transform",
+        "object_delete",
+        "object_duplicate",
+        "object_rename",
+        "object_parent",
+        "mesh_edit",
+        "mesh_select",
+        "mesh_get",
+        "boolean_op",
+        "material_set",
+        "undo",
+        "redo",
+        "history_list",
+        "viewport_render",
+        "file_import",
+        "file_export",
+        "project_save",
+        "project_load",
+        "batch",
     ] {
         assert!(names.contains(&n), "missing tool {n}");
     }
@@ -24,7 +41,10 @@ async fn tool_list_has_schemas_for_every_tool() {
     }
     let create = defs.iter().find(|d| d.name == "object_create").unwrap();
     let props = &create.input_schema["properties"];
-    assert!(props["primitive"]["description"].as_str().unwrap().contains("cube"));
+    assert!(props["primitive"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("cube"));
     assert!(props["translation"].is_object());
 }
 
@@ -35,11 +55,21 @@ async fn unknown_tool_and_bad_arguments() {
     assert_eq!(err.code, "unknown_tool");
     assert!(err.hint.contains("object_create"));
 
-    let err = e.err("object_create", json!({"primitive": {"type": "cube"}, "colour": 1})).await;
+    let err = e
+        .err(
+            "object_create",
+            json!({"primitive": {"type": "cube"}, "colour": 1}),
+        )
+        .await;
     assert_eq!(err.code, "invalid_arguments");
     assert!(err.message.contains("colour"), "{}", err.message);
 
-    let err = e.err("object_create", json!({"primitive": {"type": "dodecahedron"}})).await;
+    let err = e
+        .err(
+            "object_create",
+            json!({"primitive": {"type": "dodecahedron"}}),
+        )
+        .await;
     assert_eq!(err.code, "invalid_arguments");
     assert!(err.message.contains("primitive"), "{}", err.message);
 
@@ -93,15 +123,26 @@ async fn object_create_happy_and_errors() {
     assert_eq!(v["history_entry"]["origin"], "ai");
 
     // Empty group node + child referenced by name.
-    let g = e.ok("object_create", json!({"name": "Group", "translation": [0, 0, 1]})).await;
+    let g = e
+        .ok(
+            "object_create",
+            json!({"name": "Group", "translation": [0, 0, 1]}),
+        )
+        .await;
     assert_eq!(g["object"]["has_mesh"], false);
     let c = e
-        .ok("object_create", json!({"primitive": {"type": "cube"}, "parent": "Group"}))
+        .ok(
+            "object_create",
+            json!({"primitive": {"type": "cube"}, "parent": "Group"}),
+        )
         .await;
     assert_eq!(c["object"]["parent"], g["object"]["id"]);
 
     let err = e
-        .err("object_create", json!({"primitive": {"type": "cube"}, "parent": "Nope"}))
+        .err(
+            "object_create",
+            json!({"primitive": {"type": "cube"}, "parent": "Nope"}),
+        )
         .await;
     assert_eq!(err.code, "object_not_found");
     assert!(err.hint.contains("scene_get"));
@@ -109,12 +150,18 @@ async fn object_create_happy_and_errors() {
     assert!(err.hint.contains("'Pillar'"));
 
     let err = e
-        .err("object_create", json!({"primitive": {"type": "cube", "size": -1}}))
+        .err(
+            "object_create",
+            json!({"primitive": {"type": "cube", "size": -1}}),
+        )
         .await;
     assert_eq!(err.code, "invalid_parameter");
 
     let err = e
-        .err("object_create", json!({"primitive": {"type": "cube"}, "scale": [1, 0, 1]}))
+        .err(
+            "object_create",
+            json!({"primitive": {"type": "cube"}, "scale": [1, 0, 1]}),
+        )
         .await;
     assert_eq!(err.code, "invalid_parameter");
 }
@@ -131,7 +178,10 @@ async fn object_transform_absolute_relative_and_errors() {
         .await;
     approx(&v["objects"][0]["translation"], [1.0, 2.0, 3.0]);
     approx(&v["objects"][0]["scale"], [2.0, 2.0, 2.0]);
-    assert!(v["history_entry"]["label"].as_str().unwrap().starts_with("AI: "));
+    assert!(v["history_entry"]["label"]
+        .as_str()
+        .unwrap()
+        .starts_with("AI: "));
 
     let v = e
         .ok(
@@ -155,7 +205,10 @@ async fn object_transform_absolute_relative_and_errors() {
     let err = e.err("object_transform", json!({"objects": ["A"]})).await;
     assert_eq!(err.code, "invalid_arguments");
     let err = e
-        .err("object_transform", json!({"objects": ["B"], "translation": [0, 0, 1]}))
+        .err(
+            "object_transform",
+            json!({"objects": ["B"], "translation": [0, 0, 1]}),
+        )
         .await;
     assert_eq!(err.code, "object_not_found");
     let err = e
@@ -174,38 +227,72 @@ async fn object_delete_duplicate_rename_parent() {
     e.cube("B").await;
 
     // duplicate
-    let v = e.ok("object_duplicate", json!({"objects": ["A"], "offset": [3, 0, 0]})).await;
+    let v = e
+        .ok(
+            "object_duplicate",
+            json!({"objects": ["A"], "offset": [3, 0, 0]}),
+        )
+        .await;
     assert_eq!(v["objects"][0]["name"], "A.001");
     approx(&v["objects"][0]["translation"], [3.0, 0.0, 0.0]);
     assert_eq!(v["changes"]["created"].as_array().unwrap().len(), 1);
 
     // rename
-    let v = e.ok("object_rename", json!({"object": a, "name": "Base"})).await;
+    let v = e
+        .ok("object_rename", json!({"object": a, "name": "Base"}))
+        .await;
     assert_eq!(v["object"]["name"], "Base");
-    let v = e.ok("object_rename", json!({"object": "B", "name": "Base"})).await;
+    let v = e
+        .ok("object_rename", json!({"object": "B", "name": "Base"}))
+        .await;
     assert_eq!(v["object"]["name"], "Base.001", "names are made unique");
-    let err = e.err("object_rename", json!({"object": "A.001", "name": "  "})).await;
+    let err = e
+        .err("object_rename", json!({"object": "A.001", "name": "  "}))
+        .await;
     assert_eq!(err.code, "invalid_arguments");
 
     // parent
-    let v = e.ok("object_parent", json!({"objects": ["A.001"], "parent": "Base"})).await;
+    let v = e
+        .ok(
+            "object_parent",
+            json!({"objects": ["A.001"], "parent": "Base"}),
+        )
+        .await;
     assert_eq!(v["objects"][0]["parent"], a);
-    let err = e.err("object_parent", json!({"objects": ["Base"], "parent": "A.001"})).await;
+    let err = e
+        .err(
+            "object_parent",
+            json!({"objects": ["Base"], "parent": "A.001"}),
+        )
+        .await;
     assert_eq!(err.code, "hierarchy_cycle");
-    let v = e.ok("object_parent", json!({"objects": ["A.001"], "parent": null})).await;
+    let v = e
+        .ok(
+            "object_parent",
+            json!({"objects": ["A.001"], "parent": null}),
+        )
+        .await;
     assert!(v["objects"][0]["parent"].is_null());
 
     // delete
-    let v = e.ok("object_delete", json!({"objects": ["Base.001"]})).await;
+    let v = e
+        .ok("object_delete", json!({"objects": ["Base.001"]}))
+        .await;
     assert_eq!(v["changes"]["deleted"][0]["name"], "Base.001");
     assert_eq!(e.scene().await["object_count"], 2);
     let err = e.err("object_delete", json!({"objects": []})).await;
     assert_eq!(err.code, "invalid_arguments");
-    let err = e.err("object_delete", json!({"objects": ["Base.001"]})).await;
+    let err = e
+        .err("object_delete", json!({"objects": ["Base.001"]}))
+        .await;
     assert_eq!(err.code, "object_not_found");
 
     // duplicate with nothing selected
-    e.ok("mesh_select", json!({"by": {"type": "objects", "objects": []}})).await;
+    e.ok(
+        "mesh_select",
+        json!({"by": {"type": "objects", "objects": []}}),
+    )
+    .await;
     let err = e.err("object_duplicate", json!({})).await;
     assert_eq!(err.code, "empty_selection");
     assert!(err.hint.contains("mesh_select") || err.hint.contains("explicitly"));
@@ -221,7 +308,11 @@ async fn ambiguous_names_are_reported() {
     let a = doc.scene.add_node(Node::new("Twin"), None).unwrap();
     doc.scene.add_node(Node::new("Twin"), None).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let tools = Forge3dTools::new(DocumentHost::spawn(doc), Workspace::new(dir.path()).unwrap(), Origin::Ai);
+    let tools = Forge3dTools::new(
+        DocumentHost::spawn(doc),
+        Workspace::new(dir.path()).unwrap(),
+        Origin::Ai,
+    );
     let err = tools
         .call("object_rename", json!({"object": "Twin", "name": "x"}))
         .await
@@ -231,7 +322,10 @@ async fn ambiguous_names_are_reported() {
     assert!(err.hint.contains("id"));
     // Ids always work.
     let v = tools
-        .call("object_rename", json!({"object": a.to_string(), "name": "Solo"}))
+        .call(
+            "object_rename",
+            json!({"object": a.to_string(), "name": "Solo"}),
+        )
         .await
         .unwrap();
     assert_eq!(v["object"]["name"], "Solo");
@@ -254,13 +348,22 @@ async fn mesh_select_and_edit_chain() {
 
     // extrude uses the selection
     let v = e
-        .ok("mesh_edit", json!({"object": "Box", "operation": {"type": "extrude", "distance": 0.5}}))
+        .ok(
+            "mesh_edit",
+            json!({"object": "Box", "operation": {"type": "extrude", "distance": 0.5}}),
+        )
         .await;
     assert_eq!(v["mesh"]["vertex_count"], 12);
     assert_eq!(v["mesh"]["face_count"], 10);
     assert_eq!(v["changes"]["modified"][0]["vertex_count"], 12);
-    assert!(v["history_entry"]["label"].as_str().unwrap().starts_with("AI: Extrude"));
-    assert_eq!(v["selection"]["counts"]["faces"], 1, "the cap stays selected");
+    assert!(v["history_entry"]["label"]
+        .as_str()
+        .unwrap()
+        .starts_with("AI: Extrude"));
+    assert_eq!(
+        v["selection"]["counts"]["faces"], 1,
+        "the cap stays selected"
+    );
     let o = e.object("Box").await;
     approx(&o["world_bounds"]["max"], [1.0, 1.0, 1.5]);
 
@@ -274,23 +377,45 @@ async fn mesh_select_and_edit_chain() {
     assert!(v["mesh"]["face_count"].as_u64().unwrap() > 10);
 
     // other operations
-    e.ok("mesh_edit", json!({"operation": {"type": "subdivide", "levels": 1}})).await;
-    e.ok("mesh_edit", json!({"operation": {"type": "recalculate_normals"}})).await;
-    e.ok("mesh_edit", json!({"operation": {"type": "flip_normals"}})).await;
+    e.ok(
+        "mesh_edit",
+        json!({"operation": {"type": "subdivide", "levels": 1}}),
+    )
+    .await;
+    e.ok(
+        "mesh_edit",
+        json!({"operation": {"type": "recalculate_normals"}}),
+    )
+    .await;
+    e.ok("mesh_edit", json!({"operation": {"type": "flip_normals"}}))
+        .await;
 
     // errors
     let err = e
-        .err("mesh_edit", json!({"operation": {"type": "extrude", "faces": [99999]}}))
+        .err(
+            "mesh_edit",
+            json!({"operation": {"type": "extrude", "faces": [99999]}}),
+        )
         .await;
     assert_eq!(err.code, "element_out_of_range");
     assert!(err.hint.contains("mesh_get") || err.hint.contains("mesh_select"));
-    let err = e.err("mesh_edit", json!({"operation": {"type": "subdivide", "levels": 9}})).await;
+    let err = e
+        .err(
+            "mesh_edit",
+            json!({"operation": {"type": "subdivide", "levels": 9}}),
+        )
+        .await;
     assert_eq!(err.code, "invalid_parameter");
-    let err = e.err("mesh_edit", json!({"operation": {"type": "explode"}})).await;
+    let err = e
+        .err("mesh_edit", json!({"operation": {"type": "explode"}}))
+        .await;
     assert_eq!(err.code, "invalid_arguments");
     let g = e.ok("object_create", json!({"name": "Empty"})).await;
     let err = e
-        .err("mesh_edit", json!({"object": g["object"]["id"], "operation": {"type": "subdivide"}}))
+        .err(
+            "mesh_edit",
+            json!({"object": g["object"]["id"], "operation": {"type": "subdivide"}}),
+        )
         .await;
     assert_eq!(err.code, "node_has_no_mesh");
 }
@@ -299,16 +424,24 @@ async fn mesh_select_and_edit_chain() {
 async fn mesh_edit_loop_cut_bevel_mirror_merge_delete_transform() {
     let e = env();
     e.cube("C").await;
-    let edges = e.ok("mesh_get", json!({"object": "C", "include": ["edges"]})).await;
+    let edges = e
+        .ok("mesh_get", json!({"object": "C", "include": ["edges"]}))
+        .await;
     assert_eq!(edges["edges"]["total"], 12);
     let v = e
-        .ok("mesh_edit", json!({"object": "C", "operation": {"type": "loop_cut", "edge": 0, "cuts": 2}}))
+        .ok(
+            "mesh_edit",
+            json!({"object": "C", "operation": {"type": "loop_cut", "edge": 0, "cuts": 2}}),
+        )
         .await;
     assert!(v["mesh"]["face_count"].as_u64().unwrap() > 6);
 
     e.cube("D").await;
     let v = e
-        .ok("mesh_edit", json!({"object": "D", "operation": {"type": "bevel", "edges": [0], "width": 0.1}}))
+        .ok(
+            "mesh_edit",
+            json!({"object": "D", "operation": {"type": "bevel", "edges": [0], "width": 0.1}}),
+        )
         .await;
     assert_eq!(v["mesh"]["face_count"], 7);
 
@@ -319,11 +452,17 @@ async fn mesh_edit_loop_cut_bevel_mirror_merge_delete_transform() {
     )
     .await;
     let v = e
-        .ok("mesh_edit", json!({"object": "M", "operation": {"type": "transform", "translation": [2, 0, 0]}}))
+        .ok(
+            "mesh_edit",
+            json!({"object": "M", "operation": {"type": "transform", "translation": [2, 0, 0]}}),
+        )
         .await;
     assert_eq!(v["mesh"]["vertex_count"], 8);
     let v = e
-        .ok("mesh_edit", json!({"object": "M", "operation": {"type": "mirror", "axis": "x"}}))
+        .ok(
+            "mesh_edit",
+            json!({"object": "M", "operation": {"type": "mirror", "axis": "x"}}),
+        )
         .await;
     assert_eq!(v["mesh"]["vertex_count"], 16);
     let v = e
@@ -331,11 +470,17 @@ async fn mesh_edit_loop_cut_bevel_mirror_merge_delete_transform() {
         .await;
     assert_eq!(v["mesh"]["vertex_count"], 15);
     let v = e
-        .ok("mesh_edit", json!({"object": "M", "operation": {"type": "delete", "kind": "face", "indices": [0]}}))
+        .ok(
+            "mesh_edit",
+            json!({"object": "M", "operation": {"type": "delete", "kind": "face", "indices": [0]}}),
+        )
         .await;
     assert!(v["mesh"]["face_count"].as_u64().unwrap() < 12);
     let err = e
-        .err("mesh_edit", json!({"object": "M", "operation": {"type": "transform"}}))
+        .err(
+            "mesh_edit",
+            json!({"object": "M", "operation": {"type": "transform"}}),
+        )
         .await;
     assert_eq!(err.code, "invalid_arguments");
 }
@@ -344,23 +489,51 @@ async fn mesh_edit_loop_cut_bevel_mirror_merge_delete_transform() {
 async fn mesh_select_variants_and_errors() {
     let e = env();
     e.cube("Box").await;
-    let v = e.ok("mesh_select", json!({"by": {"type": "all"}, "kind": "vertex"})).await;
+    let v = e
+        .ok(
+            "mesh_select",
+            json!({"by": {"type": "all"}, "kind": "vertex"}),
+        )
+        .await;
     assert_eq!(v["selected_count"], 8);
     assert_eq!(v["selection"]["mode"], "vertex");
     let v = e.ok("mesh_select", json!({"by": {"type": "indices", "indices": [0, 1]}, "kind": "vertex", "action": "remove"})).await;
     assert_eq!(v["selected_count"], 6);
-    let v = e.ok("mesh_select", json!({"by": {"type": "invert"}, "kind": "vertex"})).await;
+    let v = e
+        .ok(
+            "mesh_select",
+            json!({"by": {"type": "invert"}, "kind": "vertex"}),
+        )
+        .await;
     assert_eq!(v["selected_count"], 2);
     let v = e
-        .ok("mesh_select", json!({"by": {"type": "box", "min": [-2, -2, 0.5], "max": [2, 2, 2]}, "kind": "face"}))
+        .ok(
+            "mesh_select",
+            json!({"by": {"type": "box", "min": [-2, -2, 0.5], "max": [2, 2, 2]}, "kind": "face"}),
+        )
         .await;
     assert_eq!(v["indices"].as_array().unwrap().len(), 1);
-    let v = e.ok("mesh_select", json!({"by": {"type": "edge_loop", "edge": 0, "ring": true}})).await;
+    let v = e
+        .ok(
+            "mesh_select",
+            json!({"by": {"type": "edge_loop", "edge": 0, "ring": true}}),
+        )
+        .await;
     assert_eq!(v["kind"], "edge");
     assert!(v["selected_count"].as_u64().unwrap() >= 2);
-    let v = e.ok("mesh_select", json!({"by": {"type": "normal", "reference": 0}, "kind": "face"})).await;
+    let v = e
+        .ok(
+            "mesh_select",
+            json!({"by": {"type": "normal", "reference": 0}, "kind": "face"}),
+        )
+        .await;
     assert_eq!(v["selected_count"], 1);
-    let v = e.ok("mesh_select", json!({"by": {"type": "all"}, "kind": "face", "max_indices": 2})).await;
+    let v = e
+        .ok(
+            "mesh_select",
+            json!({"by": {"type": "all"}, "kind": "face", "max_indices": 2}),
+        )
+        .await;
     assert_eq!(v["indices"].as_array().unwrap().len(), 2);
     assert_eq!(v["truncated"], true);
     let v = e.ok("mesh_select", json!({"by": {"type": "none"}})).await;
@@ -368,11 +541,25 @@ async fn mesh_select_variants_and_errors() {
     let v = e.ok("mesh_select", json!({"mode": "object"})).await;
     assert_eq!(v["selection"]["mode"], "object");
     // Selection steps are recorded as AI history entries.
-    assert!(e.history_labels().await.iter().any(|l| l.starts_with("AI: Select")));
+    assert!(e
+        .history_labels()
+        .await
+        .iter()
+        .any(|l| l.starts_with("AI: Select")));
 
-    let err = e.err("mesh_select", json!({"by": {"type": "indices", "indices": [42]}, "kind": "vertex"})).await;
+    let err = e
+        .err(
+            "mesh_select",
+            json!({"by": {"type": "indices", "indices": [42]}, "kind": "vertex"}),
+        )
+        .await;
     assert_eq!(err.code, "element_out_of_range");
-    let err = e.err("mesh_select", json!({"by": {"type": "direction", "direction": [0, 0, 0]}})).await;
+    let err = e
+        .err(
+            "mesh_select",
+            json!({"by": {"type": "direction", "direction": [0, 0, 0]}}),
+        )
+        .await;
     assert_eq!(err.code, "invalid_parameter");
     let err = e.err("mesh_select", json!({})).await;
     assert_eq!(err.code, "invalid_arguments");
@@ -386,7 +573,9 @@ async fn mesh_get_paging_normals_validation() {
         json!({"primitive": {"type": "uv_sphere", "segments": 64, "rings": 32}, "name": "Ball", "translation": [0, 0, 5]}),
     )
     .await;
-    let v = e.ok("mesh_get", json!({"object": "Ball", "limit": 100})).await;
+    let v = e
+        .ok("mesh_get", json!({"object": "Ball", "limit": 100}))
+        .await;
     let total_v = v["vertices"]["total"].as_u64().unwrap();
     assert!(total_v > 1000);
     assert_eq!(v["vertices"]["items"].as_array().unwrap().len(), 100);
@@ -397,7 +586,12 @@ async fn mesh_get_paging_normals_validation() {
     assert!(v["vertices"]["items"][0].get("normal").is_none());
 
     // hard cap
-    let v = e.ok("mesh_get", json!({"object": "Ball", "limit": 50000, "include": ["vertices"]})).await;
+    let v = e
+        .ok(
+            "mesh_get",
+            json!({"object": "Ball", "limit": 50000, "include": ["vertices"]}),
+        )
+        .await;
     assert_eq!(v["vertices"]["items"].as_array().unwrap().len(), 1000);
     assert_eq!(v["limit_capped"], true);
     assert!(v.get("faces").is_none());
@@ -415,10 +609,17 @@ async fn mesh_get_paging_normals_validation() {
     let z = v["vertices"]["items"][0]["position"][2].as_f64().unwrap();
     assert!(z > 3.9, "{z}");
 
-    let v = e.ok("mesh_get", json!({"object": "Ball", "offset": total_v + 5, "include": ["vertices"]})).await;
+    let v = e
+        .ok(
+            "mesh_get",
+            json!({"object": "Ball", "offset": total_v + 5, "include": ["vertices"]}),
+        )
+        .await;
     assert_eq!(v["vertices"]["items"].as_array().unwrap().len(), 0);
 
-    let err = e.err("mesh_get", json!({"object": "Ball", "limit": 0})).await;
+    let err = e
+        .err("mesh_get", json!({"object": "Ball", "limit": 0}))
+        .await;
     assert_eq!(err.code, "invalid_arguments");
     e.ok("object_create", json!({"name": "Group"})).await;
     let err = e.err("mesh_get", json!({"object": "Group"})).await;
@@ -435,18 +636,36 @@ async fn boolean_op_happy_and_errors() {
     )
     .await;
     let v = e
-        .ok("boolean_op", json!({"object": "A", "other": "Cutter", "operation": "difference"}))
+        .ok(
+            "boolean_op",
+            json!({"object": "A", "other": "Cutter", "operation": "difference"}),
+        )
         .await;
     assert_eq!(v["object"]["name"], "A");
     assert!(v["object"]["face_count"].as_u64().unwrap() > 6);
     assert_eq!(v["changes"]["deleted"][0]["name"], "Cutter");
     assert_eq!(e.scene().await["object_count"], 1);
 
-    let err = e.err("boolean_op", json!({"object": "A", "other": "A", "operation": "union"})).await;
+    let err = e
+        .err(
+            "boolean_op",
+            json!({"object": "A", "other": "A", "operation": "union"}),
+        )
+        .await;
     assert_eq!(err.code, "invalid_arguments");
-    let err = e.err("boolean_op", json!({"object": "A", "other": "Ghost", "operation": "union"})).await;
+    let err = e
+        .err(
+            "boolean_op",
+            json!({"object": "A", "other": "Ghost", "operation": "union"}),
+        )
+        .await;
     assert_eq!(err.code, "object_not_found");
-    let err = e.err("boolean_op", json!({"object": "A", "other": "A", "operation": "xor"})).await;
+    let err = e
+        .err(
+            "boolean_op",
+            json!({"object": "A", "other": "A", "operation": "xor"}),
+        )
+        .await;
     assert_eq!(err.code, "invalid_arguments");
 }
 
@@ -464,10 +683,17 @@ async fn material_set_happy_and_errors() {
     assert_eq!(v["objects"].as_array().unwrap().len(), 2);
     assert_eq!(v["objects"][0]["material"]["name"], "Red");
     assert_eq!(v["changes"]["modified"].as_array().unwrap().len(), 2);
-    let v = e.ok("material_set", json!({"objects": ["A"], "clear": true})).await;
+    let v = e
+        .ok("material_set", json!({"objects": ["A"], "clear": true}))
+        .await;
     assert!(v["objects"][0]["material"].is_null());
 
-    let err = e.err("material_set", json!({"objects": ["A"], "material": {"roughness": 2.0}})).await;
+    let err = e
+        .err(
+            "material_set",
+            json!({"objects": ["A"], "material": {"roughness": 2.0}}),
+        )
+        .await;
     assert_eq!(err.code, "invalid_parameter");
     assert!(err.hint.contains("roughness"));
     let err = e.err("material_set", json!({"objects": ["A"]})).await;
@@ -478,7 +704,11 @@ async fn material_set_happy_and_errors() {
 async fn undo_redo_history_with_ai_labels() {
     let e = env();
     e.cube("A").await;
-    e.ok("object_transform", json!({"objects": ["A"], "translation": [0, 0, 1]})).await;
+    e.ok(
+        "object_transform",
+        json!({"objects": ["A"], "translation": [0, 0, 1]}),
+    )
+    .await;
     let labels = e.history_labels().await;
     assert_eq!(labels.len(), 2);
     assert!(labels.iter().all(|l| l.starts_with("AI: ")), "{labels:?}");
@@ -531,7 +761,10 @@ async fn viewport_render_returns_png_of_requested_size() {
     let reader = decoder.read_info().unwrap();
     assert_eq!(reader.info().width, 320);
     assert_eq!(reader.info().height, 200);
-    assert!(out.value["description"].as_str().unwrap().contains("320x200"));
+    assert!(out.value["description"]
+        .as_str()
+        .unwrap()
+        .contains("320x200"));
 
     // via `call` the image is embedded as base64
     let v = e
@@ -543,7 +776,12 @@ async fn viewport_render_returns_png_of_requested_size() {
 
     let err = e.err("viewport_render", json!({"width": 5000})).await;
     assert_eq!(err.code, "invalid_arguments");
-    let err = e.err("viewport_render", json!({"camera": {"kind": "auto", "focus": ["Ghost"]}})).await;
+    let err = e
+        .err(
+            "viewport_render",
+            json!({"camera": {"kind": "auto", "focus": ["Ghost"]}}),
+        )
+        .await;
     assert_eq!(err.code, "object_not_found");
     let err = e
         .err("viewport_render", json!({"width": 64, "height": 64, "camera": {"kind": "look_at", "eye": [0, 0, 0], "target": [0, 0, 0]}}))
@@ -555,37 +793,66 @@ async fn viewport_render_returns_png_of_requested_size() {
 async fn file_export_import_and_project_roundtrip() {
     let e = env();
     e.cube("A").await;
-    e.ok("object_create", json!({"primitive": {"type": "torus"}, "name": "Ring", "translation": [3, 0, 0]})).await;
+    e.ok(
+        "object_create",
+        json!({"primitive": {"type": "torus"}, "name": "Ring", "translation": [3, 0, 0]}),
+    )
+    .await;
 
     let v = e.ok("file_export", json!({"path": "out/scene.glb"})).await;
     assert_eq!(v["files"][0]["path"], "out/scene.glb");
     assert!(e.dir.path().join("out/scene.glb").exists());
-    let v = e.ok("file_export", json!({"path": "ring.obj", "objects": ["Ring"]})).await;
+    let v = e
+        .ok(
+            "file_export",
+            json!({"path": "ring.obj", "objects": ["Ring"]}),
+        )
+        .await;
     assert_eq!(v["files"][0]["path"], "ring.obj");
-    e.ok("file_export", json!({"path": "a.stl", "objects": ["A"], "stl_ascii": true})).await;
+    e.ok(
+        "file_export",
+        json!({"path": "a.stl", "objects": ["A"], "stl_ascii": true}),
+    )
+    .await;
 
     let v = e.ok("file_import", json!({"path": "out/scene.glb"})).await;
     assert_eq!(v["objects"].as_array().unwrap().len(), 2);
-    assert!(v["history_entry"]["label"].as_str().unwrap().starts_with("AI: Import"));
+    assert!(v["history_entry"]["label"]
+        .as_str()
+        .unwrap()
+        .starts_with("AI: Import"));
     assert_eq!(e.scene().await["object_count"], 4);
     e.ok("undo", json!({})).await;
     assert_eq!(e.scene().await["object_count"], 2);
 
-    let v = e.ok("project_save", json!({"path": "proj/model.f3d"})).await;
+    let v = e
+        .ok("project_save", json!({"path": "proj/model.f3d"}))
+        .await;
     assert_eq!(v["objects"], 2);
-    e.ok("object_delete", json!({"objects": ["A", "Ring"]})).await;
+    e.ok("object_delete", json!({"objects": ["A", "Ring"]}))
+        .await;
     assert_eq!(e.scene().await["object_count"], 0);
 
-    let v = e.ok("project_load", json!({"path": "proj/model.f3d"})).await;
+    let v = e
+        .ok("project_load", json!({"path": "proj/model.f3d"}))
+        .await;
     assert_eq!(v["scene"]["object_count"], 2);
     assert_eq!(v["changes"]["created"].as_array().unwrap().len(), 2);
-    assert!(v["history_entry"]["label"].as_str().unwrap().starts_with("AI: Load project"));
+    assert!(v["history_entry"]["label"]
+        .as_str()
+        .unwrap()
+        .starts_with("AI: Load project"));
     // Loading is undoable.
     e.ok("undo", json!({})).await;
     assert_eq!(e.scene().await["object_count"], 0);
     e.ok("redo", json!({})).await;
     assert_eq!(e.scene().await["object_count"], 2);
-    let v = e.ok("project_load", json!({"path": "proj/model.f3d", "clear_history": true})).await;
+    let v = e
+        .ok(
+            "project_load",
+            json!({"path": "proj/model.f3d", "clear_history": true}),
+        )
+        .await;
     assert_eq!(v["history_cleared"], true);
     assert_eq!(e.ok("history_list", json!({})).await["total"], 0);
 
@@ -598,8 +865,16 @@ async fn file_export_import_and_project_roundtrip() {
     assert_eq!(err.code, "invalid_arguments");
     std::fs::write(e.dir.path().join("bad.f3d"), b"not json").unwrap();
     let err = e.err("project_load", json!({"path": "bad.f3d"})).await;
-    assert!(err.code == "parse_error" || err.code == "invalid_project", "{err:?}");
-    let err = e.err("file_import", json!({"path": "bad.f3d", "parent": "Nobody"})).await;
+    assert!(
+        err.code == "parse_error" || err.code == "invalid_project",
+        "{err:?}"
+    );
+    let err = e
+        .err(
+            "file_import",
+            json!({"path": "bad.f3d", "parent": "Nobody"}),
+        )
+        .await;
     assert_eq!(err.code, "object_not_found");
 }
 
@@ -610,23 +885,35 @@ async fn path_traversal_and_symlink_escapes_are_rejected() {
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("secret.glb"), b"x").unwrap();
 
-    for path in ["../escape.glb", "sub/../../escape.glb", "new/../../escape.glb"] {
+    for path in [
+        "../escape.glb",
+        "sub/../../escape.glb",
+        "new/../../escape.glb",
+    ] {
         let err = e.err("file_export", json!({"path": path})).await;
         assert_eq!(err.code, "path_not_allowed", "{path}: {err:?}");
-        assert!(err.hint.contains(&e.tools.workspace().root().display().to_string()));
+        assert!(err
+            .hint
+            .contains(&e.tools.workspace().root().display().to_string()));
     }
     let abs = outside.path().join("abs.glb");
-    let err = e.err("file_export", json!({"path": abs.to_str().unwrap()})).await;
+    let err = e
+        .err("file_export", json!({"path": abs.to_str().unwrap()}))
+        .await;
     assert_eq!(err.code, "path_not_allowed");
     let err = e
-        .err("file_import", json!({"path": outside.path().join("secret.glb").to_str().unwrap()}))
+        .err(
+            "file_import",
+            json!({"path": outside.path().join("secret.glb").to_str().unwrap()}),
+        )
         .await;
     assert_eq!(err.code, "path_not_allowed");
     assert!(!abs.exists());
 
     // Absolute paths inside the workspace are fine.
     let inside = e.tools.workspace().root().join("inside.glb");
-    e.ok("file_export", json!({"path": inside.to_str().unwrap()})).await;
+    e.ok("file_export", json!({"path": inside.to_str().unwrap()}))
+        .await;
 
     #[cfg(unix)]
     {
@@ -634,16 +921,26 @@ async fn path_traversal_and_symlink_escapes_are_rejected() {
         std::os::unix::fs::symlink(outside.path(), e.dir.path().join("link")).unwrap();
         let err = e.err("file_export", json!({"path": "link/x.glb"})).await;
         assert_eq!(err.code, "path_not_allowed");
-        let err = e.err("file_import", json!({"path": "link/secret.glb"})).await;
+        let err = e
+            .err("file_import", json!({"path": "link/secret.glb"}))
+            .await;
         assert_eq!(err.code, "path_not_allowed");
         // File symlink pointing outside.
-        std::os::unix::fs::symlink(outside.path().join("secret.glb"), e.dir.path().join("s.glb")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.glb"),
+            e.dir.path().join("s.glb"),
+        )
+        .unwrap();
         let err = e.err("file_import", json!({"path": "s.glb"})).await;
         assert_eq!(err.code, "path_not_allowed");
         let err = e.err("project_save", json!({"path": "link/p.f3d"})).await;
         assert_eq!(err.code, "path_not_allowed");
         // Dangling symlink (would be created outside on write).
-        std::os::unix::fs::symlink(outside.path().join("nothing.glb"), e.dir.path().join("dangling.glb")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("nothing.glb"),
+            e.dir.path().join("dangling.glb"),
+        )
+        .unwrap();
         let err = e.err("file_export", json!({"path": "dangling.glb"})).await;
         assert_eq!(err.code, "path_not_allowed");
         assert!(!outside.path().join("nothing.glb").exists());
@@ -676,7 +973,11 @@ async fn batch_success_with_name_references() {
     assert_eq!(v["history_entry"]["label"], "AI: Build a stool");
     assert_eq!(v["changes"]["created"].as_array().unwrap().len(), 3);
     let labels = e.history_labels().await;
-    assert_eq!(labels, vec!["AI: Build a stool".to_string()], "one history entry");
+    assert_eq!(
+        labels,
+        vec!["AI: Build a stool".to_string()],
+        "one history entry"
+    );
     assert_eq!(e.scene().await["object_count"], 3);
     // The ids reported by the steps are the ids in the scene.
     let leg = e.object("Leg").await;
@@ -714,24 +1015,41 @@ async fn batch_failure_rolls_back_and_names_index() {
     let after = e.scene().await;
     assert_eq!(after["objects"], before["objects"], "rolled back");
     assert_eq!(after["selection"], before["selection"]);
-    assert_eq!(e.history_labels().await.len(), 1, "no history entry for the failed batch");
+    assert_eq!(
+        e.history_labels().await.len(),
+        1,
+        "no history entry for the failed batch"
+    );
 
     // Planning errors (unknown object) also name the index.
     let err = e
-        .err("batch", json!({"steps": [
-            {"tool": "object_create", "arguments": {"primitive": {"type": "cube"}}},
-            {"tool": "object_rename", "arguments": {"object": "Nobody", "name": "x"}}
-        ]}))
+        .err(
+            "batch",
+            json!({"steps": [
+                {"tool": "object_create", "arguments": {"primitive": {"type": "cube"}}},
+                {"tool": "object_rename", "arguments": {"object": "Nobody", "name": "x"}}
+            ]}),
+        )
         .await;
     assert_eq!(err.details.unwrap()["index"], 1);
     assert_eq!(e.scene().await["object_count"], 1);
 
     // Shape errors.
-    let err = e.err("batch", json!({"steps": [{"tool": "undo", "arguments": {}}]})).await;
+    let err = e
+        .err(
+            "batch",
+            json!({"steps": [{"tool": "undo", "arguments": {}}]}),
+        )
+        .await;
     assert_eq!(err.code, "batch_failed");
     assert!(err.hint.contains("object_create"));
-    let err = e.err("batch", json!({"steps": [{"command": {"op": "levitate"}}]})).await;
-    assert_eq!(err.details.unwrap()["step_error"]["code"], "invalid_command");
+    let err = e
+        .err("batch", json!({"steps": [{"command": {"op": "levitate"}}]}))
+        .await;
+    assert_eq!(
+        err.details.unwrap()["step_error"]["code"],
+        "invalid_command"
+    );
     let err = e.err("batch", json!({"steps": []})).await;
     assert_eq!(err.code, "invalid_arguments");
     let err = e.err("batch", json!({"steps": [{}]})).await;

@@ -129,10 +129,10 @@ impl From<&Material> for MaterialInfo {
     fn from(m: &Material) -> Self {
         MaterialInfo {
             name: m.name.clone(),
-            base_color: m.base_color,
-            metallic: m.metallic,
-            roughness: m.roughness,
-            emissive: m.emissive,
+            base_color: m.base_color.map(round),
+            metallic: round(m.metallic),
+            roughness: round(m.roughness),
+            emissive: m.emissive.map(round),
         }
     }
 }
@@ -239,7 +239,11 @@ pub fn selection_info(doc: &Document) -> SelectionInfo {
             .objects_with_elements()
             .map(|(id, s)| ElementSelectionInfo {
                 object: *id,
-                object_name: doc.scene.get(*id).map(|n| n.name.clone()).unwrap_or_default(),
+                object_name: doc
+                    .scene
+                    .get(*id)
+                    .map(|n| n.name.clone())
+                    .unwrap_or_default(),
                 vertices: s.vertices.len(),
                 edges: s.edges.len(),
                 faces: s.faces.len(),

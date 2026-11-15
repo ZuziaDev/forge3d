@@ -28,7 +28,11 @@ pub struct ApiError {
 
 impl ApiError {
     /// Build an error from its parts.
-    pub fn new(code: impl Into<String>, message: impl Into<String>, hint: impl Into<String>) -> Self {
+    pub fn new(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        hint: impl Into<String>,
+    ) -> Self {
         ApiError {
             code: code.into(),
             message: message.into(),
