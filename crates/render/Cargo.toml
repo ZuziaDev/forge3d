@@ -1,0 +1,28 @@
+[package]
+name = "forge3d-render"
+description = "Rendering for forge3d: cameras, scene extraction, a CPU software rasterizer (headless PNG output) and an optional wgpu viewport renderer with ID-buffer picking"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[features]
+default = ["gpu"]
+# wgpu viewport renderer, GPU picking and GPU offscreen rendering.
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
+
+[dependencies]
+forge3d-core.workspace = true
+glam.workspace = true
+serde.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+png.workspace = true
+rayon.workspace = true
+wgpu = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+naga = { version = "30", features = ["wgsl-in"] }
