@@ -1,0 +1,31 @@
+[package]
+name = "forge3d-api"
+description = "AI connection layer of forge3d: single-writer document host, transport-independent tool registry and an MCP server (stdio + Streamable HTTP)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+forge3d-core.workspace = true
+forge3d-io.workspace = true
+forge3d-render.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+schemars.workspace = true
+crossbeam-channel = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "net", "io-std", "signal"] }
+tokio-util = "0.7"
+rmcp = { version = "3.10.0", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+base64 = "0.22"
+serde_path_to_error = "0.1"
+subtle = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+png.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
