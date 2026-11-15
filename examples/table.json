@@ -1,0 +1,54 @@
+{
+  "description": "A small table with a beveled, inlaid top, four metal legs, a hollow vase and a fruit",
+  "steps": [
+    {"name": "group", "tool": "object_create", "arguments": {"name": "Table"}},
+
+    {"name": "tabletop", "tool": "object_create", "arguments": {
+      "primitive": {"type": "cube", "size": 1.0},
+      "name": "Tabletop", "parent": "Table", "translation": [0, 0, 0.75],
+      "material": {"name": "Oak", "base_color": [0.62, 0.42, 0.24, 1.0], "roughness": 0.7}
+    }},
+    {"tool": "mesh_select", "arguments": {"object": "Tabletop", "kind": "vertex", "by": {"type": "all"}}},
+    {"name": "shape top", "tool": "mesh_edit", "arguments": {"object": "Tabletop",
+      "operation": {"type": "transform", "scale": [1.6, 0.9, 0.06]}}},
+    {"tool": "mesh_select", "arguments": {"object": "Tabletop", "kind": "edge", "by": {"type": "all"}}},
+    {"name": "round edges", "tool": "mesh_edit", "arguments": {"object": "Tabletop",
+      "operation": {"type": "bevel", "width": 0.012}}},
+    {"tool": "mesh_select", "arguments": {"object": "Tabletop", "kind": "face",
+      "by": {"type": "direction", "direction": [0, 0, 1], "max_angle_deg": 5}}},
+    {"name": "inlay border", "tool": "mesh_edit", "arguments": {"object": "Tabletop",
+      "operation": {"type": "inset", "thickness": 0.08}}},
+    {"name": "inlay recess", "tool": "mesh_edit", "arguments": {"object": "Tabletop",
+      "operation": {"type": "extrude", "distance": -0.008}}},
+
+    {"name": "leg", "tool": "object_create", "arguments": {
+      "primitive": {"type": "cylinder", "radius": 0.035, "depth": 0.72, "segments": 16},
+      "name": "Leg", "parent": "Table", "translation": [0.7, 0.36, 0.36],
+      "material": {"name": "Steel", "base_color": [0.25, 0.26, 0.28, 1.0], "metallic": 1.0, "roughness": 0.35}
+    }},
+    {"tool": "object_duplicate", "arguments": {"objects": ["Leg"], "offset": [-1.4, 0, 0]}},
+    {"tool": "object_duplicate", "arguments": {"objects": ["Leg"], "offset": [0, -0.72, 0]}},
+    {"tool": "object_duplicate", "arguments": {"objects": ["Leg"], "offset": [-1.4, -0.72, 0]}},
+
+    {"name": "vase", "tool": "object_create", "arguments": {
+      "primitive": {"type": "cylinder", "radius": 0.08, "depth": 0.26, "segments": 24},
+      "name": "Vase", "translation": [0.35, 0.05, 0.91],
+      "material": {"name": "Ceramic", "base_color": [0.15, 0.35, 0.75, 1.0], "roughness": 0.25}
+    }},
+    {"tool": "mesh_select", "arguments": {"object": "Vase", "kind": "face",
+      "by": {"type": "direction", "direction": [0, 0, 1], "max_angle_deg": 5}}},
+    {"tool": "mesh_edit", "arguments": {"object": "Vase", "operation": {"type": "inset", "thickness": 0.012}}},
+    {"name": "hollow vase", "tool": "mesh_edit", "arguments": {"object": "Vase", "operation": {"type": "extrude", "distance": -0.22}}},
+    {"tool": "object_parent", "arguments": {"objects": ["Vase"], "parent": "Table"}},
+
+    {"name": "fruit", "tool": "object_create", "arguments": {
+      "primitive": {"type": "ico_sphere", "radius": 0.06, "subdivisions": 2},
+      "name": "Apple", "parent": "Table", "translation": [-0.3, 0.1, 0.84],
+      "material": {"name": "Apple", "base_color": [0.8, 0.1, 0.08, 1.0], "roughness": 0.4}
+    }},
+    {"op": "subdivide", "levels": 1},
+
+    {"tool": "mesh_select", "arguments": {"by": {"type": "objects", "objects": ["Table"]}}},
+    {"name": "check", "tool": "scene_get", "arguments": {}}
+  ]
+}
