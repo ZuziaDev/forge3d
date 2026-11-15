@@ -1,0 +1,29 @@
+[package]
+name = "forge3d-app"
+description = "Interactive forge3d modeler: winit + egui + wgpu GUI where every edit is a shared CommandSpec"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+name = "forge3d_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "forge3d-gui"
+path = "src/main.rs"
+
+[dependencies]
+forge3d-core.workspace = true
+forge3d-io.workspace = true
+forge3d-render = { workspace = true, features = ["gpu"] }
+glam.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+pollster.workspace = true
+png.workspace = true
+egui = "0.37"
+egui-wgpu = { version = "0.37", features = ["x11", "wayland"] }
+egui-winit = "0.37"
+winit = "0.30"
+anyhow = "1"
