@@ -7,6 +7,8 @@
 
 use forge3d_core::math::Aabb;
 use forge3d_core::scene::Scene;
+use glam::camera::rh::proj::directx as proj;
+use glam::camera::rh::view::look_at_mat4;
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -170,7 +172,7 @@ impl Camera {
                         "fov_y_deg {fov_y_deg} must be in (0, 180)"
                     )));
                 }
-                if !(self.near > 0.0) {
+                if self.near <= 0.0 {
                     return Err(RenderError::InvalidCamera(
                         "perspective near must be > 0".into(),
                     ));
@@ -189,7 +191,7 @@ impl Camera {
                 }
             }
         }
-        if !(self.far > self.near) {
+        if self.far <= self.near {
             return Err(RenderError::InvalidCamera("far must be > near".into()));
         }
         Ok(())
@@ -235,7 +237,7 @@ impl Camera {
 
     /// World → view matrix (right-handed, camera looks down −Z).
     pub fn view_matrix(&self) -> Mat4 {
-        Mat4::look_at_rh(self.eye, self.target, self.effective_up())
+        look_at_mat4(self.eye, self.target, self.effective_up())
     }
 
     /// View → clip matrix for the given aspect ratio (width / height), depth `0..=1`.
@@ -247,12 +249,12 @@ impl Camera {
         };
         match self.projection {
             Projection::Perspective { fov_y_deg } => {
-                Mat4::perspective_rh(fov_y_deg.to_radians(), aspect, self.near, self.far)
+                proj::perspective(fov_y_deg.to_radians(), aspect, self.near, self.far)
             }
             Projection::Orthographic { height } => {
                 let h = height * 0.5;
                 let w = h * aspect;
-                Mat4::orthographic_rh(-w, w, -h, h, self.near, self.far)
+                proj::orthographic(-w, w, -h, h, self.near, self.far)
             }
         }
     }
@@ -305,11 +307,7 @@ impl Camera {
             return None;
         }
         let n = c.xyz() / c.w;
-        Some(Vec3::new(
-            (n.x * 0.5 + 0.5) * w,
-            (0.5 - n.y * 0.5) * h,
-            n.z,
-        ))
+        Some(Vec3::new((n.x * 0.5 + 0.5) * w, (0.5 - n.y * 0.5) * h, n.z))
     }
 
     /// Size of the grid cell (power of ten) suited to this view; shared by
@@ -632,7 +630,9 @@ impl CameraSpec {
                 orthographic,
                 focus,
             } => {
-                let (yaw, pitch) = view.map(|v| v.yaw_pitch()).unwrap_or((*yaw_deg, *pitch_deg));
+                let (yaw, pitch) = view
+                    .map(|v| v.yaw_pitch())
+                    .unwrap_or((*yaw_deg, *pitch_deg));
                 let mut orbit = OrbitCamera::new(Vec3::ZERO, d_distance(), yaw, pitch);
                 orbit.fov_y_deg = *fov_y_deg;
                 orbit.orthographic = *orthographic;

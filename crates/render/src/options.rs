@@ -9,6 +9,8 @@ use crate::error::{RenderError, RenderResult};
 pub const MAX_IMAGE_SIZE: u32 = 8192;
 /// Largest accepted supersampling factor per axis.
 pub const MAX_SUPERSAMPLE: u32 = 4;
+/// Largest accepted number of samples (`width × height × supersample²`).
+pub const MAX_SAMPLES: u64 = 4096 * 4096;
 
 fn d_true() -> bool {
     true
@@ -127,10 +129,10 @@ impl RenderOptions {
         let samples = self.width as u64
             * self.height as u64
             * (self.supersample as u64 * self.supersample as u64);
-        if samples > 8192 * 8192 {
+        if samples > MAX_SAMPLES {
             return Err(RenderError::option(
                 "supersample",
-                "width × height × supersample² must not exceed 67 million samples",
+                "width × height × supersample² must not exceed 16777216 (4096²) samples; lower the size or supersample",
             ));
         }
         self.view.validate()
