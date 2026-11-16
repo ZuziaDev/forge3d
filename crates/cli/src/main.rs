@@ -4,12 +4,12 @@
 //! forge3d mcp   [--workspace DIR] [--project FILE.f3d]          stdio MCP server
 //! forge3d serve [--addr 127.0.0.1:7878] [--token T] [--workspace DIR] [--project FILE.f3d]
 //! forge3d run   SCRIPT.json [--export OUT]... [--save OUT.f3d] [--render OUT.png]
+//! forge3d gui   [--workspace DIR] [--project FILE.f3d] [--mcp-http ADDR] [--token T] [--no-mcp] [--mcp-stdio]
 //! forge3d tools                                                  tool list + schemas (JSON)
 //! forge3d export IN OUT                                          convert files
 //! ```
 //!
-//! New front-ends (e.g. a `gui` subcommand) are added as a variant of
-//! [`Command`] plus a `cmd_*` function.
+//! With no subcommand (and the `gui` feature) the GUI starts.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -30,11 +30,14 @@ use forge3d_core::document::Document;
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Open the modeler window; an MCP server runs alongside and edits the same live document.
+    #[cfg(feature = "gui")]
+    Gui(GuiArgs),
     /// Run the MCP server on stdin/stdout (for Claude Desktop / Claude Code).
     Mcp(ServerArgs),
     /// Run the MCP server over Streamable HTTP.
@@ -60,6 +63,43 @@ struct ServerArgs {
     /// Project (.f3d) to open at start.
     #[arg(long)]
     project: Option<PathBuf>,
+}
+
+#[cfg(feature = "gui")]
+#[derive(Args, Debug, Clone)]
+struct GuiArgs {
+    #[command(flatten)]
+    server: ServerArgs,
+    /// Streamable HTTP MCP address of the running GUI.
+    #[arg(long, default_value = "127.0.0.1:7878")]
+    mcp_http: SocketAddr,
+    /// Require `Authorization: Bearer <TOKEN>` on the HTTP MCP endpoint.
+    #[arg(long, env = "FORGE3D_TOKEN", hide_env_values = true)]
+    token: Option<String>,
+    /// Do not start any MCP server.
+    #[arg(long)]
+    no_mcp: bool,
+    /// Also serve MCP on stdin/stdout (for clients that spawn the GUI).
+    #[arg(long)]
+    mcp_stdio: bool,
+    /// Render the window to a PNG and exit (testing).
+    #[arg(long)]
+    screenshot: Option<PathBuf>,
+    /// Frames to draw before --screenshot.
+    #[arg(long, default_value_t = 8)]
+    after_frames: u32,
+}
+
+#[cfg(feature = "gui")]
+impl GuiArgs {
+    /// Arguments for a bare `forge3d` (same defaults as `forge3d gui`).
+    fn default_args() -> Self {
+        let cli = Cli::parse_from(["forge3d", "gui"]);
+        match cli.command {
+            Some(Command::Gui(a)) => a,
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[derive(Args, Debug, Clone)]
@@ -327,8 +367,111 @@ fn cmd_export(input: &Path, output: &Path) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+#[cfg(feature = "gui")]
+fn cmd_gui(args: GuiArgs) -> Result<ExitCode> {
+    use std::sync::{Arc, OnceLock};
+    init_logging("info");
+    let ws = workspace(args.server.workspace.as_deref())?;
+    let doc = open_document(args.server.project.as_deref())?;
+    let waker_cell: Arc<OnceLock<forge3d_app::Waker>> = Arc::new(OnceLock::new());
+    let cell = waker_cell.clone();
+    let (handle, jobs) = forge3d_api::DocumentHandle::channel_with_waker(Arc::new(move || {
+        if let Some(w) = cell.get() {
+            w.wake();
+        }
+    }));
+    if !args.no_mcp {
+        let tools = Forge3dTools::new(handle, ws, Origin::Ai);
+        let token = args.token.clone().filter(|t| !t.is_empty());
+        let (addr, stdio) = (args.mcp_http, args.mcp_stdio);
+        std::thread::Builder::new()
+            .name("forge3d-mcp".into())
+            .spawn(move || {
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => return eprintln!("MCP server disabled: cannot start runtime: {e}"),
+                };
+                rt.block_on(async move {
+                    if stdio {
+                        let t = tools.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = forge3d_api::serve_stdio(t).await {
+                                eprintln!("MCP stdio stopped: {e}");
+                            }
+                        });
+                    }
+                    let config = HttpConfig {
+                        addr,
+                        token: token.clone(),
+                        ..Default::default()
+                    };
+                    match forge3d_api::start_http(tools, config).await {
+                        Ok(server) => {
+                            eprintln!(
+                                "forge3d MCP (live GUI) listening on {} ({})",
+                                server.url,
+                                if token.is_some() {
+                                    "bearer token required"
+                                } else {
+                                    "no auth, loopback only"
+                                }
+                            );
+                            let _ = server.wait().await;
+                        }
+                        Err(e) => {
+                            eprintln!("MCP HTTP server not started on {addr}: {e}");
+                            if !stdio {
+                                std::future::pending::<()>().await;
+                            }
+                        }
+                    }
+                    std::future::pending::<()>().await;
+                });
+            })
+            .context("starting the MCP thread")?;
+    }
+    let options = forge3d_app::AppOptions {
+        document: doc,
+        project_path: args.server.project.clone(),
+        frame_hook: Some(Box::new(move |doc| jobs.drain(doc) > 0)),
+        on_waker: Some(Box::new(move |w| {
+            let _ = waker_cell.set(w);
+        })),
+        screenshot: args.screenshot.map(|path| forge3d_app::ScreenshotRequest {
+            path,
+            after_frames: args.after_frames,
+            headless: false,
+        }),
+        ..Default::default()
+    };
+    forge3d_app::run(options).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(ExitCode::SUCCESS)
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    #[cfg(feature = "gui")]
+    {
+        let gui_args = match &cli.command {
+            None => Some(GuiArgs::default_args()),
+            Some(Command::Gui(a)) => Some(a.clone()),
+            _ => None,
+        };
+        if let Some(a) = gui_args {
+            return match cmd_gui(a) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e:#}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+    }
+    let Some(command) = cli.command else {
+        use clap::CommandFactory;
+        let _ = Cli::command().print_help();
+        return ExitCode::FAILURE;
+    };
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -340,7 +483,9 @@ fn main() -> ExitCode {
         }
     };
     let result = rt.block_on(async move {
-        match cli.command {
+        match command {
+            #[cfg(feature = "gui")]
+            Command::Gui(_) => unreachable!("handled before the runtime starts"),
             Command::Mcp(a) => cmd_mcp(a).await,
             Command::Serve(a) => cmd_serve(a).await,
             Command::Run(a) => cmd_run(a).await,
