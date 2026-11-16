@@ -25,7 +25,7 @@ jobs:
           version="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')"
           [ "v$version" = "$TAG" ] || { echo "tag $TAG does not match Cargo.toml version $version" >&2; exit 1; }
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis
-      - run: rustup toolchain install stable --profile minimal && rustup default stable && rustup target add x86_64-pc-windows-gnu
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Build exe and installer
         run: ./packaging/windows/build.sh dist
