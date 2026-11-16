@@ -58,7 +58,6 @@ Section "forge3d" SecMain
 
   CreateDirectory "$SMPROGRAMS\forge3d"
   CreateShortcut "$SMPROGRAMS\forge3d\forge3d.lnk" "$INSTDIR\forge3d.exe" "gui --workspace $\"$DOCUMENTS\forge3d$\""
-  CreateShortcut "$SMPROGRAMS\forge3d\forge3d (GUI + MCP HTTP).lnk" "$INSTDIR\forge3d.exe" "gui --mcp-http 127.0.0.1:7878 --workspace $\"$DOCUMENTS\forge3d$\""
   CreateShortcut "$SMPROGRAMS\forge3d\Uninstall forge3d.lnk" "$INSTDIR\uninstall.exe"
   CreateShortcut "$DESKTOP\forge3d.lnk" "$INSTDIR\forge3d.exe" "gui --workspace $\"$DOCUMENTS\forge3d$\""
 
