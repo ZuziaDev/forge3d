@@ -22,7 +22,7 @@ uuid.workspace = true
 thiserror.workspace = true
 pollster.workspace = true
 png.workspace = true
-egui = "0.37"
+egui = { version = "0.37", features = ["default_fonts"] }
 egui-wgpu = { version = "0.37", features = ["x11", "wayland"] }
 egui-winit = "0.37"
 winit = "0.30"
