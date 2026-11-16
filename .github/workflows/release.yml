@@ -17,9 +17,8 @@ jobs:
       TAG: ${{ inputs.tag || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      # Manual runs build the selected branch; gh release create then tags that commit.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
       - name: Check that the tag matches the crate version
         run: |
           version="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')"
