@@ -15,11 +15,12 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-    InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
-    PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
-    Resource, ResourceContents, ResourceTemplate, ServerCapabilities, ServerConfig, Tool,
-    ToolAnnotations,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, GetPromptRequestParams,
+    GetPromptResponse, GetPromptResult, Implementation, InitializeResult, ListPromptsResult,
+    ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+    Prompt, PromptArgument, PromptMessage, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, Resource, ResourceContents, ResourceTemplate, Role, ServerCapabilities,
+    ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -30,15 +31,11 @@ use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::ApiError;
+use crate::guide::{render_prompt, PROMPTS};
 use crate::resources;
 use crate::tools::{tool_defs, tool_names, Forge3dTools};
 
-/// Instructions sent to the client at initialization.
-pub const INSTRUCTIONS: &str = "forge3d is a 3D polygon modeler. You edit ONE shared document (the user may watch it live in the GUI).\n\
-Workflow: 1) scene_get to see objects, ids and the selection. 2) Build with object_create (primitives: cube, plane, uv_sphere, ico_sphere, cylinder, cone, torus), object_transform, material_set, and refine meshes with mesh_select + mesh_edit (extrude, inset, bevel, loop_cut, subdivide, mirror, ...). 3) viewport_render to LOOK at the result and fix proportions. 4) file_export (.glb) or project_save (.f3d) when asked.\n\
-Conventions: Z is up, units are meters, primitives are centered at their origin (a cube of size 1 at translation [0,0,0.5] sits on the ground). Rotations are XYZ Euler degrees.\n\
-Objects can be referenced by id OR by unique name. Element indices change after topology edits: re-query with mesh_select/mesh_get. Use batch for multi-step changes that should be one atomic undo step. Every change is undoable (undo/redo/history_list) and labelled \"AI: ...\" in the history.\n\
-Errors come back as {code, message, hint}: read the hint and retry. File paths are relative to the server's workspace directory.";
+pub use crate::guide::INSTRUCTIONS;
 
 /// The MCP server handler.
 #[derive(Clone)]
@@ -134,6 +131,7 @@ impl ServerHandler for Forge3dMcpServer {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_prompts()
                 .build(),
         )
         .with_server_info(
@@ -186,6 +184,49 @@ impl ServerHandler for Forge3dMcpServer {
         ))
     }
 
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult::with_all_items(
+            PROMPTS
+                .iter()
+                .map(|p| {
+                    let args = p
+                        .arguments
+                        .iter()
+                        .map(|(n, d, req)| {
+                            PromptArgument::new(*n)
+                                .with_description(*d)
+                                .with_required(*req)
+                        })
+                        .collect();
+                    Prompt::new(p.name, Some(p.description), Some(args)).with_title(p.title)
+                })
+                .collect(),
+        ))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, McpError> {
+        let args = request.arguments.unwrap_or_default();
+        let text =
+            render_prompt(&request.name, &args).map_err(|m| McpError::invalid_params(m, None))?;
+        let description = PROMPTS
+            .iter()
+            .find(|p| p.name == request.name)
+            .map_or("", |p| p.description);
+        Ok(
+            GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
+                .with_description(description)
+                .into(),
+        )
+    }
+
     async fn list_resource_templates(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -209,12 +250,17 @@ impl ServerHandler for Forge3dMcpServer {
         let uri = request.uri;
         match resources::read_resource(self.tools.handle(), &uri).await {
             Ok(v) => {
-                let mime = if uri == resources::COMMAND_SCHEMA_URI {
-                    "application/schema+json"
-                } else {
-                    "application/json"
+                let (mime, text) = match v {
+                    Value::String(markdown) => ("text/markdown", markdown),
+                    v if uri == resources::COMMAND_SCHEMA_URI => (
+                        "application/schema+json",
+                        serde_json::to_string_pretty(&v).expect("serializes"),
+                    ),
+                    v => (
+                        "application/json",
+                        serde_json::to_string_pretty(&v).expect("serializes"),
+                    ),
                 };
-                let text = serde_json::to_string_pretty(&v).expect("serializes");
                 Ok(ReadResourceResult::new(vec![
                     ResourceContents::text(text, uri).with_mime_type(mime)
                 ])

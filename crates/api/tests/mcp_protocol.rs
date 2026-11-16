@@ -80,13 +80,14 @@ async fn mcp_session_over_in_process_transport() {
     assert_eq!(r["serverInfo"]["name"], "forge3d");
     assert!(r["capabilities"]["tools"].is_object());
     assert!(r["capabilities"]["resources"].is_object());
+    assert!(r["capabilities"]["prompts"].is_object());
     assert!(r["instructions"].as_str().unwrap().contains("Z is up"));
     c.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
         .await;
 
     let list = c.request("tools/list", json!({})).await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 21);
+    assert_eq!(tools.len(), 25);
     let create = tools.iter().find(|t| t["name"] == "object_create").unwrap();
     assert_eq!(create["inputSchema"]["type"], "object");
     assert_eq!(create["annotations"]["readOnlyHint"], false);
@@ -174,6 +175,43 @@ async fn mcp_session_over_in_process_transport() {
     assert!(uris.contains(&"forge3d://scene"));
     assert!(uris.contains(&"forge3d://history"));
     assert!(uris.iter().any(|u| u.starts_with("forge3d://object/")));
+    assert!(uris.contains(&"forge3d://guide"));
+    let guide = c
+        .request("resources/read", json!({"uri": "forge3d://guide"}))
+        .await;
+    let g = &guide["result"]["contents"][0];
+    assert_eq!(g["mimeType"], "text/markdown");
+    assert!(g["text"].as_str().unwrap().contains("## Recipes"));
+
+    // Prompts.
+    let pl = c.request("prompts/list", json!({})).await;
+    let prompts = pl["result"]["prompts"].as_array().unwrap();
+    let names: Vec<&str> = prompts
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["model_object", "review_model"]);
+    assert_eq!(prompts[0]["arguments"][0]["name"], "description");
+    assert_eq!(prompts[0]["arguments"][0]["required"], true);
+    let pg = c
+        .request(
+            "prompts/get",
+            json!({"name": "model_object", "arguments": {"description": "a chair"}}),
+        )
+        .await;
+    let msg = &pg["result"]["messages"][0];
+    assert_eq!(msg["role"], "user");
+    assert!(msg["content"]["text"].as_str().unwrap().contains("a chair"));
+    let bad = c
+        .request(
+            "prompts/get",
+            json!({"name": "model_object", "arguments": {}}),
+        )
+        .await;
+    assert!(bad["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("description"));
     let tl = c.request("resources/templates/list", json!({})).await;
     assert_eq!(
         tl["result"]["resourceTemplates"][0]["uriTemplate"],

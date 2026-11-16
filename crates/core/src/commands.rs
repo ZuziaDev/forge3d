@@ -1351,8 +1351,8 @@ impl MeshOp {
 /// positions for edits that keep the topology (element transforms, smoothing).
 enum MeshSnapshot {
     Full {
-        before: Mesh,
-        after: Mesh,
+        before: Box<Mesh>,
+        after: Box<Mesh>,
     },
     Positions {
         verts: Vec<VertexId>,
@@ -1398,7 +1398,7 @@ impl Command for MeshEdit {
         if let Some(st) = self.state.as_ref() {
             let mesh = doc.scene.mesh_mut(st.id)?;
             match &st.snapshot {
-                MeshSnapshot::Full { after, .. } => *mesh = after.clone(),
+                MeshSnapshot::Full { after, .. } => *mesh = (**after).clone(),
                 MeshSnapshot::Positions { verts, after, .. } => set_positions(mesh, verts, after),
             }
             doc.selection
@@ -1427,8 +1427,8 @@ impl Command for MeshEdit {
             }
         } else {
             MeshSnapshot::Full {
-                before: mesh.clone(),
-                after: res.mesh.clone(),
+                before: Box::new(mesh.clone()),
+                after: Box::new(res.mesh.clone()),
             }
         };
         *doc.scene.mesh_mut(id)? = res.mesh;
@@ -1445,7 +1445,7 @@ impl Command for MeshEdit {
         let st = self.state.as_ref().ok_or_else(not_applied)?;
         let mesh = doc.scene.mesh_mut(st.id)?;
         match &st.snapshot {
-            MeshSnapshot::Full { before, .. } => *mesh = before.clone(),
+            MeshSnapshot::Full { before, .. } => *mesh = (**before).clone(),
             MeshSnapshot::Positions { verts, before, .. } => set_positions(mesh, verts, before),
         }
         Ok(())

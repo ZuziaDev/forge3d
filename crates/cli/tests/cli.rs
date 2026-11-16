@@ -138,7 +138,7 @@ fn tools_command_prints_schemas() {
     assert!(out.status.success());
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     let tools = v.as_array().unwrap();
-    assert_eq!(tools.len(), 21);
+    assert_eq!(tools.len(), 25);
     assert!(tools.iter().all(|t| t["input_schema"]["type"] == "object"));
 }
 
@@ -185,7 +185,7 @@ fn mcp_stdio_end_to_end() {
 
     send(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
     let list = recv(2);
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 21);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 25);
 
     send(
         json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {

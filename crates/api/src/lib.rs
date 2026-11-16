@@ -14,6 +14,9 @@
 //!   Streamable HTTP (bearer token, Origin/Host validation),
 //! * [`script`] – JSON scripts (tool calls and raw CommandSpecs) for headless runs,
 //! * [`resources`] – `forge3d://scene`, `forge3d://object/{id}`, `forge3d://history`,
+//!   `forge3d://guide`, `forge3d://schema/command`,
+//! * [`guide`] – server instructions, the modeling guide and MCP prompts
+//!   (`model_object`, `review_model`),
 //! * [`workspace`] – confinement of file paths to a workspace directory,
 //! * [`error`] – [`ApiError`] `{code, message, hint, details}`.
 //!
@@ -41,6 +44,7 @@
 #![forbid(unsafe_code)]
 
 pub mod error;
+pub mod guide;
 pub mod host;
 pub mod info;
 pub mod mcp;

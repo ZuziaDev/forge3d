@@ -115,7 +115,8 @@ async fn resources_list_and_read() {
     assert!(uris.contains(&"forge3d://history"));
     assert!(uris.contains(&"forge3d://schema/command"));
     assert!(uris.contains(&format!("forge3d://object/{id}").as_str()));
-    assert_eq!(list.len(), 5);
+    assert!(uris.contains(&"forge3d://guide"));
+    assert_eq!(list.len(), 6);
 
     let scene = read_resource(e.tools.handle(), "forge3d://scene")
         .await

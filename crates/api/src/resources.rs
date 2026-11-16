@@ -3,7 +3,8 @@
 //! * `forge3d://scene` – the scene tree (same as the `scene_get` tool),
 //! * `forge3d://object/{id}` – one object (id or unique name), template,
 //! * `forge3d://history` – the undo history,
-//! * `forge3d://schema/command` – JSON Schema of raw CommandSpec (batch `command` steps).
+//! * `forge3d://schema/command` – JSON Schema of raw CommandSpec (batch `command` steps),
+//! * `forge3d://guide` – long-form modeling guide with recipes (Markdown).
 
 use forge3d_core::spec::CommandSpec;
 use serde::Serialize;
@@ -12,6 +13,9 @@ use serde_json::{json, Value};
 use crate::error::{ApiError, ApiResult};
 use crate::host::DocumentHandle;
 use crate::info::{object_info, resolve_ref, scene_info};
+
+use crate::guide::GUIDE;
+pub use crate::guide::GUIDE_URI;
 
 /// URI of the scene resource.
 pub const SCENE_URI: &str = "forge3d://scene";
@@ -63,6 +67,13 @@ pub async fn list_resources(handle: &DocumentHandle) -> ApiResult<Vec<ResourceIn
             mime_type: "application/json".into(),
         },
         ResourceInfo {
+            uri: GUIDE_URI.into(),
+            name: "guide".into(),
+            description: "Modeling best practices and worked recipes (table, mug, rounded box, low-poly tree). Read before larger modeling tasks."
+                .into(),
+            mime_type: "text/markdown".into(),
+        },
+        ResourceInfo {
             uri: COMMAND_SCHEMA_URI.into(),
             name: "command-schema".into(),
             description: "JSON Schema of raw CommandSpec objects usable as batch `command` steps."
@@ -105,6 +116,7 @@ pub async fn read_resource(handle: &DocumentHandle, uri: &str) -> ApiResult<Valu
                 .await
         }
         COMMAND_SCHEMA_URI => Ok(CommandSpec::json_schema()),
+        GUIDE_URI => Ok(Value::String(GUIDE.to_string())),
         _ => {
             let Some(r) = uri.strip_prefix(OBJECT_PREFIX) else {
                 return Err(unknown(uri));
@@ -127,7 +139,7 @@ fn unknown(uri: &str) -> ApiError {
     ApiError::new(
         "resource_not_found",
         format!("unknown resource '{uri}'"),
-        format!("Available: {SCENE_URI}, {HISTORY_URI}, {COMMAND_SCHEMA_URI} and {OBJECT_TEMPLATE} (id or unique name); list them with resources/list."),
+        format!("Available: {SCENE_URI}, {HISTORY_URI}, {GUIDE_URI}, {COMMAND_SCHEMA_URI} and {OBJECT_TEMPLATE} (id or unique name); list them with resources/list."),
     )
 }
 
