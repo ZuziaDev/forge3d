@@ -132,9 +132,8 @@ mod tests {
         let mut cam = OrbitCamera::default();
         apply_preset(&mut cam, ViewPreset::Top);
         assert!(cam.pitch_deg > 89.0);
-        let b = Aabb::new(Vec3::splat(-1.0), Vec3::splat(1.0)).transformed(
-            &glam::Affine3A::from_translation(Vec3::new(5.0, 0.0, 0.0)),
-        );
+        let b = Aabb::new(Vec3::splat(-1.0), Vec3::splat(1.0))
+            .transformed(&glam::Affine3A::from_translation(Vec3::new(5.0, 0.0, 0.0)));
         frame(&mut cam, Some(b), 1.5);
         assert!((cam.target - Vec3::new(5.0, 0.0, 0.0)).length() < 1e-4);
         frame(&mut cam, None, 1.5);

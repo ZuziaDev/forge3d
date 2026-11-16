@@ -151,7 +151,11 @@ pub fn mesh_tool_spec(
             threshold: p.merge_threshold,
         },
         MeshTool::DeleteElements => {
-            let kind = doc.selection.mode.element_kind().unwrap_or(ElementKind::Face);
+            let kind = doc
+                .selection
+                .mode
+                .element_kind()
+                .unwrap_or(ElementKind::Face);
             CommandSpec::DeleteElements {
                 object: Some(object),
                 kind: Some(kind),
@@ -211,10 +215,7 @@ pub fn top_level_selection(doc: &Document) -> Vec<Uuid> {
         .collect();
     ids.iter()
         .copied()
-        .filter(|&id| {
-            !ids.iter()
-                .any(|&o| o != id && doc.scene.is_ancestor(o, id))
-        })
+        .filter(|&id| !ids.iter().any(|&o| o != id && doc.scene.is_ancestor(o, id)))
         .collect()
 }
 

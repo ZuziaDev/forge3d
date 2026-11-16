@@ -2,8 +2,8 @@
 //! input into [`Action`]s / commands on it; it never touches the scene.
 
 use egui::{
-    pos2, vec2, Align2, Color32, CursorIcon, FontId, Key, Modifiers, PointerButton, Rect,
-    RichText, Sense, Stroke, StrokeKind, TextureId, Ui,
+    pos2, vec2, Align2, Color32, CursorIcon, FontId, Key, Modifiers, PointerButton, Rect, RichText,
+    Sense, Stroke, StrokeKind, TextureId, Ui,
 };
 use forge3d_core::math::{euler_deg_from_quat, Axis};
 use forge3d_core::prelude::*;
@@ -49,7 +49,7 @@ pub fn setup_style(ctx: &egui::Context) {
         style.spacing.item_spacing = vec2(6.0, 5.0);
         style.spacing.button_padding = vec2(7.0, 3.0);
         style.spacing.interact_size.y = 22.0;
-        for (_, font) in style.text_styles.iter_mut() {
+        for font in style.text_styles.values_mut() {
             font.size = (font.size * 1.04).round();
         }
     });
@@ -185,7 +185,10 @@ fn handle_shortcuts(ui: &mut Ui, st: &mut AppState) {
     if open {
         st.ui.file_dialog = Some(FileDialog {
             kind: FileDialogKind::Open,
-            path: st.path.as_ref().map_or_else(String::new, |p| p.display().to_string()),
+            path: st
+                .path
+                .as_ref()
+                .map_or_else(String::new, |p| p.display().to_string()),
         });
     }
     if save {
@@ -218,7 +221,10 @@ fn menu_bar(ui: &mut Ui, st: &mut AppState) {
             if menu_item(ui, "Open project...", "Ctrl+O") {
                 st.ui.file_dialog = Some(FileDialog {
                     kind: FileDialogKind::Open,
-                    path: st.path.as_ref().map_or_else(String::new, |p| p.display().to_string()),
+                    path: st
+                        .path
+                        .as_ref()
+                        .map_or_else(String::new, |p| p.display().to_string()),
                 });
             }
             if menu_item(ui, "Save", "Ctrl+S") {
@@ -458,10 +464,25 @@ fn toolbar(ui: &mut Ui, st: &mut AppState) {
 
 fn view_toggles(ui: &mut Ui, st: &mut AppState) {
     for (label, on, action, tip) in [
-        ("Wire", st.view.wireframe, Action::ToggleWireframe, "Wireframe overlay"),
+        (
+            "Wire",
+            st.view.wireframe,
+            Action::ToggleWireframe,
+            "Wireframe overlay",
+        ),
         ("Grid", st.view.grid, Action::ToggleGrid, "Ground grid"),
-        ("Smooth", st.view.smooth_shading, Action::ToggleSmooth, "Smooth shading"),
-        ("Ortho", st.camera.orthographic, Action::ToggleOrtho, "Orthographic camera (O)"),
+        (
+            "Smooth",
+            st.view.smooth_shading,
+            Action::ToggleSmooth,
+            "Smooth shading",
+        ),
+        (
+            "Ortho",
+            st.camera.orthographic,
+            Action::ToggleOrtho,
+            "Orthographic camera (O)",
+        ),
     ] {
         if ui.selectable_label(on, label).on_hover_text(tip).clicked() {
             st.perform(action);
@@ -486,7 +507,11 @@ fn object_tools(ui: &mut Ui, st: &mut AppState) {
                     st.perform(Action::AddPrimitive(PrimitiveDraft::of(kind).primitive()));
                     ui.close();
                 }
-                if ui.small_button("...").on_hover_text("With parameters").clicked() {
+                if ui
+                    .small_button("...")
+                    .on_hover_text("With parameters")
+                    .clicked()
+                {
                     st.ui.primitive_dialog = Some(PrimitiveDraft::of(kind));
                     ui.close();
                 }
@@ -621,11 +646,10 @@ fn status_bar(ui: &mut Ui, st: &mut AppState) {
                 SelectMode::Edge => "Edge",
                 SelectMode::Face => "Face",
             };
-            let file = st
-                .path
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .map_or_else(|| "untitled".to_string(), |n| n.to_string_lossy().into_owned());
+            let file = st.path.as_ref().and_then(|p| p.file_name()).map_or_else(
+                || "untitled".to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
             ui.weak(format!(
                 "{}{}  |  {} objects, {} selected  |  {} mode",
                 file,
@@ -749,7 +773,12 @@ fn outliner_node(ui: &mut Ui, st: &mut AppState, id: Uuid, acts: &mut Vec<Outlin
         } else {
             Color32::from_gray(100)
         };
-        paint_eye(ui.painter(), eye_rect, visible, if eye.hovered() { ACCENT } else { eye_color });
+        paint_eye(
+            ui.painter(),
+            eye_rect,
+            visible,
+            if eye.hovered() { ACCENT } else { eye_color },
+        );
         if eye.on_hover_text("Toggle visibility").clicked() {
             acts.push(OutlinerAction::Visible(id, !visible));
         }
@@ -789,13 +818,18 @@ fn outliner_node(ui: &mut Ui, st: &mut AppState, id: Uuid, acts: &mut Vec<Outlin
             };
             ui.painter().rect_filled(rect, 3.0, fill);
         }
-        let icon_color = if active { Color32::WHITE } else { Color32::from_gray(150) };
+        let icon_color = if active {
+            Color32::WHITE
+        } else {
+            Color32::from_gray(150)
+        };
         let ic = pos2(rect.left() + 9.0, rect.center().y);
         if has_mesh {
             ui.painter()
                 .rect_filled(Rect::from_center_size(ic, vec2(8.0, 8.0)), 1.5, icon_color);
         } else {
-            ui.painter().circle_stroke(ic, 4.0, Stroke::new(1.3, icon_color));
+            ui.painter()
+                .circle_stroke(ic, 4.0, Stroke::new(1.3, icon_color));
         }
         let text_color = if visible {
             Color32::from_gray(228)
@@ -843,7 +877,10 @@ fn outliner_node(ui: &mut Ui, st: &mut AppState, id: Uuid, acts: &mut Vec<Outlin
             ui.separator();
             let active_other = st.doc.selection.active().filter(|a| *a != id);
             if ui
-                .add_enabled(active_other.is_some(), egui::Button::new("Parent to active object"))
+                .add_enabled(
+                    active_other.is_some(),
+                    egui::Button::new("Parent to active object"),
+                )
                 .clicked()
             {
                 if let Some(a) = active_other {
@@ -864,12 +901,11 @@ fn outliner_node(ui: &mut Ui, st: &mut AppState, id: Uuid, acts: &mut Vec<Outlin
             row(ui, acts, st);
         });
     } else {
-        coll.show_header(ui, |ui| row(ui, acts, st))
-            .body(|ui| {
-                for c in children {
-                    outliner_node(ui, st, c, acts);
-                }
-            });
+        coll.show_header(ui, |ui| row(ui, acts, st)).body(|ui| {
+            for c in children {
+                outliner_node(ui, st, c, acts);
+            }
+        });
     }
 }
 
@@ -901,7 +937,9 @@ fn history_panel(ui: &mut Ui, st: &mut AppState) {
                 } else if e.label.starts_with("CLI:") {
                     text = text.color(Color32::from_rgb(120, 205, 220));
                 }
-                let r = ui.selectable_label(current, text).on_hover_text(&e.description);
+                let r = ui
+                    .selectable_label(current, text)
+                    .on_hover_text(&e.description);
                 if r.clicked() {
                     goto = Some(Some(e.seq));
                 }
@@ -1083,16 +1121,28 @@ fn mesh_stats(ui: &mut Ui, st: &AppState, id: Uuid, r: &ValidationReport) {
     }
     ui.horizontal_wrapped(|ui| {
         let flag = |ui: &mut Ui, on: bool, label: &str| {
-            ui.label(RichText::new(label).color(if on { ok } else { bad }).small());
+            ui.label(
+                RichText::new(label)
+                    .color(if on { ok } else { bad })
+                    .small(),
+            );
         };
         flag(ui, r.is_manifold, "manifold");
         flag(ui, r.is_closed, "closed");
         flag(ui, r.is_consistently_oriented, "oriented");
         if r.boundary_edges > 0 {
-            ui.label(RichText::new(format!("{} boundary edges", r.boundary_edges)).small().weak());
+            ui.label(
+                RichText::new(format!("{} boundary edges", r.boundary_edges))
+                    .small()
+                    .weak(),
+            );
         }
         if r.degenerate_faces > 0 {
-            ui.label(RichText::new(format!("{} degenerate faces", r.degenerate_faces)).small().weak());
+            ui.label(
+                RichText::new(format!("{} degenerate faces", r.degenerate_faces))
+                    .small()
+                    .weak(),
+            );
         }
     });
 }
@@ -1217,9 +1267,11 @@ fn dialogs(ctx: &egui::Context, st: &mut AppState) {
             .collapsible(false)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, -60.0))
             .show(ctx, |ui| {
-                egui::Grid::new("prim_params").num_columns(2).show(ui, |ui| {
-                    primitive_fields(ui, &mut d);
-                });
+                egui::Grid::new("prim_params")
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        primitive_fields(ui, &mut d);
+                    });
                 ui.horizontal(|ui| {
                     if ui.button("Create").clicked() {
                         create = true;
@@ -1274,7 +1326,11 @@ fn primitive_fields(ui: &mut Ui, d: &mut PrimitiveDraft) {
         PrimitiveKind::Cone => {
             f(ui, "Bottom radius", &mut d.radius);
             ui.label("Top radius");
-            ui.add(egui::DragValue::new(&mut d.radius_top).speed(0.02).range(0.0..=1000.0));
+            ui.add(
+                egui::DragValue::new(&mut d.radius_top)
+                    .speed(0.02)
+                    .range(0.0..=1000.0),
+            );
             ui.end_row();
             f(ui, "Depth", &mut d.depth);
             n(ui, "Segments", &mut d.segments, 3, 256);
@@ -1299,7 +1355,10 @@ fn directory_browser(ui: &mut Ui, typed: &str) -> Option<String> {
         typed_path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
-            .map_or_else(|| std::env::current_dir().unwrap_or_default(), |p| p.to_path_buf())
+            .map_or_else(
+                || std::env::current_dir().unwrap_or_default(),
+                |p| p.to_path_buf(),
+            )
     };
     let mut picked = None;
     ui.add_space(4.0);
@@ -1318,19 +1377,22 @@ fn directory_browser(ui: &mut Ui, typed: &str) -> Option<String> {
                     rd.filter_map(Result::ok)
                         .map(|e| {
                             let p = e.path();
-                            (
-                                p.is_dir(),
-                                e.file_name().to_string_lossy().into_owned(),
-                                p,
-                            )
+                            (p.is_dir(), e.file_name().to_string_lossy().into_owned(), p)
                         })
                         .filter(|(_, n, _)| !n.starts_with('.'))
                         .collect()
                 })
                 .unwrap_or_default();
-            entries.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.to_lowercase().cmp(&b.1.to_lowercase())));
+            entries.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then(a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+            });
             for (is_dir, name, path) in entries.into_iter().take(300) {
-                let label = if is_dir { format!("\u{25B8} {name}") } else { name };
+                let label = if is_dir {
+                    format!("\u{25B8} {name}")
+                } else {
+                    name
+                };
                 if ui.selectable_label(false, label).clicked() {
                     let mut s = path.display().to_string();
                     if is_dir {
@@ -1514,7 +1576,11 @@ fn draw_gizmo(painter: &egui::Painter, rect: Rect, st: &AppState) {
     for part in gizmo::parts(st.tool, &frame, &cam, st.viewport) {
         let lit = active == Some(part.handle) || (active.is_none() && hovered == Some(part.handle));
         let dim = active.is_some() && active != Some(part.handle);
-        let mut color = if lit { HIGHLIGHT } else { handle_color(part.handle) };
+        let mut color = if lit {
+            HIGHLIGHT
+        } else {
+            handle_color(part.handle)
+        };
         if dim {
             color = color.gamma_multiply(0.45);
         }
@@ -1610,7 +1676,10 @@ fn draw_axis_widget(painter: &egui::Painter, rect: Rect, st: &AppState) {
     let c = rect.left_bottom() + vec2(56.0, -56.0);
     let len = 30.0;
     let mut axes: Vec<(f32, usize, bool)> = Vec::new();
-    for (i, e) in [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z].into_iter().enumerate() {
+    for (i, e) in [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z]
+        .into_iter()
+        .enumerate()
+    {
         let f = st.camera.to_camera().forward();
         axes.push((e.dot(f), i, true));
         axes.push((-e.dot(f), i, false));
@@ -1618,8 +1687,8 @@ fn draw_axis_widget(painter: &egui::Painter, rect: Rect, st: &AppState) {
     axes.sort_by(|a, b| b.0.total_cmp(&a.0));
     painter.circle_filled(c, len + 12.0, Color32::from_black_alpha(55));
     for (_, i, positive) in axes {
-        let e = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z][i]
-            * if positive { 1.0 } else { -1.0 };
+        let e =
+            [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z][i] * if positive { 1.0 } else { -1.0 };
         let d = vec2(e.dot(r), -e.dot(u)) * len;
         let tip = c + d;
         let col = AXIS_COLORS[i];

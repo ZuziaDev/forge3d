@@ -58,16 +58,18 @@ impl Gui {
     ) -> Result<Gui, AppError> {
         let ctx = egui::Context::default();
         ui::setup_style(&ctx);
-        let mut egui_renderer =
-            egui_wgpu::Renderer::new(&device, target_format, egui_wgpu::RendererOptions::default());
-        let gpu = GpuRenderer::new(
+        let mut egui_renderer = egui_wgpu::Renderer::new(
             &device,
-            &queue,
-            GpuRendererConfig::new(VIEWPORT_FORMAT),
-        )?;
+            target_format,
+            egui_wgpu::RendererOptions::default(),
+        );
+        let gpu = GpuRenderer::new(&device, &queue, GpuRendererConfig::new(VIEWPORT_FORMAT))?;
         let placeholder = create_viewport_texture(&device, (1, 1));
-        let viewport_id =
-            egui_renderer.register_native_texture(&device, &placeholder.view, wgpu::FilterMode::Linear);
+        let viewport_id = egui_renderer.register_native_texture(
+            &device,
+            &placeholder.view,
+            wgpu::FilterMode::Linear,
+        );
         Ok(Gui {
             state: AppState::new(doc),
             ctx,
@@ -115,8 +117,12 @@ impl Gui {
     fn sync_scene(&mut self) {
         let doc = self.state.display_doc();
         let rev = self.state.display_revision();
-        self.gpu
-            .update_scene(&doc.scene, Some(&doc.selection), Some(rev), &self.state.view);
+        self.gpu.update_scene(
+            &doc.scene,
+            Some(&doc.selection),
+            Some(rev),
+            &self.state.view,
+        );
     }
 
     /// Run the UI for `input`, resolve viewport picks, render the 3D view and
@@ -335,7 +341,11 @@ impl OffscreenTarget {
     }
 
     /// Copy the texture to the CPU as RGBA8 (blocking).
-    pub fn read_rgba(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Vec<u8>, AppError> {
+    pub fn read_rgba(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<Vec<u8>, AppError> {
         let swap_rb = match self.format {
             wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,

@@ -193,7 +193,13 @@ pub fn parts(
             GizmoMode::Scale => {
                 let box_w = frame.origin + axis * (len * 0.9);
                 let b = project(cam, box_w, size).unwrap_or(tip);
-                vec![Shape::Line(o2, b), Shape::Square { center: b, half: 5.5 }]
+                vec![
+                    Shape::Line(o2, b),
+                    Shape::Square {
+                        center: b,
+                        half: 5.5,
+                    },
+                ]
             }
             GizmoMode::Rotate => ring_arcs(frame, cam, size, i, len * 0.85),
         };
@@ -432,8 +438,8 @@ impl GizmoDrag {
             }
             (GizmoMode::Rotate, Handle::Axis(i)) => {
                 ray_plane(&ray, self.frame.origin, self.frame.axes[i]).map(|p| {
-                    let mut a = wrap_pi(plane_angle(&self.frame, i, p) - self.start_angle)
-                        .to_degrees();
+                    let mut a =
+                        wrap_pi(plane_angle(&self.frame, i, p) - self.start_angle).to_degrees();
                     if snap {
                         a = (a / ROTATE_SNAP_DEG).round() * ROTATE_SNAP_DEG;
                     }
@@ -507,7 +513,13 @@ mod tests {
         }
         // far away from the gizmo: nothing
         assert_eq!(
-            hit_test(GizmoMode::Translate, &frame, &cam, SIZE, Vec2::new(5.0, 5.0)),
+            hit_test(
+                GizmoMode::Translate,
+                &frame,
+                &cam,
+                SIZE,
+                Vec2::new(5.0, 5.0)
+            ),
             None
         );
     }
@@ -602,7 +614,8 @@ mod tests {
         let frame = GizmoFrame::world(Vec3::ZERO);
         let len = axis_length(&cam, &frame, SIZE);
         let start = screen(&cam, Vec3::X * len * 0.9);
-        let mut drag = GizmoDrag::begin(GizmoMode::Scale, Handle::Axis(0), frame, &cam, SIZE, start);
+        let mut drag =
+            GizmoDrag::begin(GizmoMode::Scale, Handle::Axis(0), frame, &cam, SIZE, start);
         let end = screen(&cam, Vec3::X * len * 1.8);
         match drag.update(&cam, SIZE, end, false, 0.25) {
             DragDelta::Scale(s) => {

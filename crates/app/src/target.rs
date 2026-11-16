@@ -126,10 +126,9 @@ impl GizmoTarget {
     pub fn is_valid(&self, doc: &Document) -> bool {
         match &self.kind {
             TargetKind::Objects(ids) => ids.iter().all(|&i| doc.scene.contains(i)),
-            TargetKind::Elements { object, .. } => doc
-                .scene
-                .get(*object)
-                .is_some_and(|n| n.mesh.is_some()),
+            TargetKind::Elements { object, .. } => {
+                doc.scene.get(*object).is_some_and(|n| n.mesh.is_some())
+            }
         }
     }
 
