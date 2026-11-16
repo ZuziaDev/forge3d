@@ -9,7 +9,13 @@ license.workspace = true
 name = "forge3d"
 path = "src/main.rs"
 
+[features]
+default = ["gui"]
+# Interactive window (winit + egui + wgpu) with a live MCP server.
+gui = ["dep:forge3d-app"]
+
 [dependencies]
+forge3d-app = { path = "../app", optional = true }
 forge3d-api.workspace = true
 forge3d-core.workspace = true
 forge3d-io.workspace = true
@@ -24,3 +30,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 [dev-dependencies]
 tempfile = "3"
 png.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json"] }

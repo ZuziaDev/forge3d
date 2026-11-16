@@ -83,6 +83,8 @@ fn not_applied() -> CoreError {
 fn plural(n: usize, word: &str) -> String {
     if n == 1 {
         format!("1 {word}")
+    } else if word == "vertex" {
+        format!("{n} vertices")
     } else {
         format!("{n} {word}s")
     }
