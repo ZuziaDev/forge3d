@@ -15,7 +15,7 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: System libraries and a software Vulkan driver for the GUI tests
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev mesa-vulkan-drivers xvfb
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-dev libx11-dev mesa-vulkan-drivers xvfb
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: xvfb-run -a cargo test --workspace
