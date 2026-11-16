@@ -99,7 +99,7 @@ pub fn draw(ui: &mut Ui, st: &mut AppState, viewport_tex: TextureId) -> UiOutput
     });
     dialogs(ui.ctx(), st);
 
-    let busy = ui.ctx().input(|i| i.pointer.any_down()) || ui.ctx().egui_wants_keyboard_input();
+    let busy = ui.ctx().input(|i| i.pointer.any_down()) || ui.ctx().text_edit_focused();
     st.end_frame(busy);
     out
 }
@@ -110,7 +110,7 @@ pub fn draw(ui: &mut Ui, st: &mut AppState, viewport_tex: TextureId) -> UiOutput
 
 fn handle_shortcuts(ui: &mut Ui, st: &mut AppState) {
     let ctx = ui.ctx().clone();
-    if ctx.egui_wants_keyboard_input() {
+    if ctx.text_edit_focused() {
         return;
     }
     let mut actions: Vec<Action> = Vec::new();
@@ -976,7 +976,7 @@ fn properties(ui: &mut Ui, st: &mut AppState) {
                 ui.weak("Click an object in the viewport or outliner.");
                 return;
             };
-            let Some(node) = st.doc.scene.get(id) else {
+            let Some(node) = st.display_doc().scene.get(id) else {
                 return;
             };
             let name = node.name.clone();
@@ -1379,6 +1379,18 @@ fn viewport(ui: &mut Ui, st: &mut AppState, tex: TextureId) -> Rect {
         Color32::WHITE,
     );
 
+    if resp.hovered() && !ui.ctx().text_edit_focused() {
+        resp.request_focus();
+    }
+    if resp.has_focus() {
+        let filter = egui::EventFilter {
+            tab: true,
+            horizontal_arrows: true,
+            vertical_arrows: true,
+            escape: true,
+        };
+        ui.memory_mut(|m| m.set_focus_lock_filter(resp.id, filter));
+    }
     let mods = ui.input(|i| to_mods(i.modifiers));
     let origin = rect.min;
     let press = ui.input(|i| i.pointer.press_origin());
