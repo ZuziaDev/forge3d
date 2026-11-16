@@ -1,0 +1,27 @@
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        default: v0.1.0
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  windows-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis
+      - run: rustup toolchain install stable --profile minimal && rustup default stable && rustup target add x86_64-pc-windows-gnu
+      - run: ./packaging/windows/build.sh dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*-setup.exe dist/forge3d.exe \
+            --target "$GITHUB_SHA" --title "forge3d $TAG" \
+            --notes "Windows installer and standalone forge3d.exe. Cross-compiled; not yet tested on Windows."
