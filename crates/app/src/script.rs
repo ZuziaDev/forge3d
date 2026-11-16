@@ -25,9 +25,9 @@ pub fn run_script(doc: &mut Document, text: &str) -> Result<usize, AppError> {
                 .split(',')
                 .map(|n| {
                     let n = n.trim();
-                    doc.scene
-                        .find_by_name(n)
-                        .ok_or_else(|| AppError::Script(format!("line {}: no object named '{n}'", i + 1)))
+                    doc.scene.find_by_name(n).ok_or_else(|| {
+                        AppError::Script(format!("line {}: no object named '{n}'", i + 1))
+                    })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             doc.execute_spec(

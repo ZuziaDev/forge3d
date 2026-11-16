@@ -692,7 +692,13 @@ impl AppState {
     pub fn selection_bounds(&self) -> Option<Aabb> {
         if self.doc.selection.mode != SelectMode::Object {
             if let Some(t) = GizmoTarget::compute(&self.doc) {
-                if let crate::target::TargetKind::Elements { object, kind, indices, world } = &t.kind {
+                if let crate::target::TargetKind::Elements {
+                    object,
+                    kind,
+                    indices,
+                    world,
+                } = &t.kind
+                {
                     let mesh = self.doc.scene.get(*object)?.mesh.as_ref()?;
                     let mut only = ElementSelection::default();
                     only.set_mut(*kind).extend(indices.iter().copied());
@@ -715,8 +721,12 @@ impl AppState {
     /// the whole scene when nothing is selected.
     pub fn frame(&mut self, selected: bool) {
         let aspect = self.viewport.0.max(1) as f32 / self.viewport.1.max(1) as f32;
-        let bounds = if selected { self.selection_bounds() } else { None }
-            .or_else(|| scene_bounds(&self.doc.scene, &[]).ok().flatten());
+        let bounds = if selected {
+            self.selection_bounds()
+        } else {
+            None
+        }
+        .or_else(|| scene_bounds(&self.doc.scene, &[]).ok().flatten());
         camera_input::frame(&mut self.camera, bounds, aspect);
     }
 
@@ -915,7 +925,11 @@ impl AppState {
     pub fn export_file(&mut self, path: &Path) {
         match forge3d_io::export_scene(&self.doc.scene, path, &ExportOptions::default()) {
             Ok(files) => {
-                self.status = Status::info(format!("Exported {} file(s) to {}", files.len(), path.display()));
+                self.status = Status::info(format!(
+                    "Exported {} file(s) to {}",
+                    files.len(),
+                    path.display()
+                ));
             }
             Err(e) => self.report(&AppError::Io(e)),
         }
@@ -1030,8 +1044,15 @@ mod tests {
         let moved = st.doc.scene.world_transform(id).unwrap().translation;
         assert!(moved.x.abs() > 0.1 && moved.y.abs() < 1e-5 && moved.z.abs() < 1e-5);
         st.undo();
-        assert_eq!(st.doc.state(), before, "undo restores the original state exactly");
-        assert_eq!(st.doc.history_list().iter().filter(|e| !e.undone).count(), entries);
+        assert_eq!(
+            st.doc.state(),
+            before,
+            "undo restores the original state exactly"
+        );
+        assert_eq!(
+            st.doc.history_list().iter().filter(|e| !e.undone).count(),
+            entries
+        );
     }
 
     #[test]
@@ -1094,13 +1115,25 @@ mod tests {
         let start = handle_point(&st, 1);
         assert!(st.begin_gizmo_drag(Handle::Axis(1), start));
         assert!(st.update_gizmo_drag(start + Vec2::new(30.0, -20.0), false));
-        assert_eq!(st.doc.state(), before, "the real document is untouched during the drag");
-        assert_ne!(st.display_doc().state(), before, "the preview shows the move");
+        assert_eq!(
+            st.doc.state(),
+            before,
+            "the real document is untouched during the drag"
+        );
+        assert_ne!(
+            st.display_doc().state(),
+            before,
+            "the preview shows the move"
+        );
         st.perform(Action::Cancel);
         assert!(!st.is_dragging());
         assert_eq!(st.doc.state(), before);
         assert_eq!(applied(&st), n);
-        assert_eq!(st.doc.history_list().len(), n, "nothing is left on the redo stack");
+        assert_eq!(
+            st.doc.history_list().len(),
+            n,
+            "nothing is left on the redo stack"
+        );
         assert!(!st.doc.can_redo());
     }
 
@@ -1129,7 +1162,10 @@ mod tests {
         let before = st.doc.state();
         let n = applied(&st);
         let target = st.gizmo_target().unwrap();
-        assert!(matches!(target.kind, crate::target::TargetKind::Elements { .. }));
+        assert!(matches!(
+            target.kind,
+            crate::target::TargetKind::Elements { .. }
+        ));
         let start = handle_point(&st, 2);
         assert!(st.begin_gizmo_drag(Handle::Axis(2), start));
         for k in 1..=6 {
@@ -1250,7 +1286,11 @@ mod tests {
         st.apply_pick(Some(hit(a, 1, 0, 0)), true); // active -> deselect
         assert_eq!(st.doc.selection.objects(), &[b]);
         st.apply_pick(None, true);
-        assert_eq!(st.doc.selection.objects(), &[b], "shift on empty keeps selection");
+        assert_eq!(
+            st.doc.selection.objects(),
+            &[b],
+            "shift on empty keeps selection"
+        );
         st.apply_pick(None, false);
         assert!(st.doc.selection.objects().is_empty());
         // element modes
@@ -1289,7 +1329,11 @@ mod tests {
         let (mut st, _) = cube_state();
         st.perform(Action::MeshTool(MeshTool::LoopCut));
         assert_eq!(st.status.kind, StatusKind::Error);
-        assert!(st.status.text.starts_with("invalid_action:"), "{}", st.status.text);
+        assert!(
+            st.status.text.starts_with("invalid_action:"),
+            "{}",
+            st.status.text
+        );
         assert!(st.status.text.contains('\u{2014}'));
         st.perform(Action::MeshTool(MeshTool::Extrude)); // object mode, no faces
         assert_eq!(st.status.kind, StatusKind::Error);
@@ -1303,7 +1347,11 @@ mod tests {
         st.undo();
         st.undo();
         st.undo();
-        assert_eq!(st.status.kind, StatusKind::Error, "nothing to undo is reported");
+        assert_eq!(
+            st.status.kind,
+            StatusKind::Error,
+            "nothing to undo is reported"
+        );
     }
 
     #[test]

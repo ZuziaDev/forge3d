@@ -100,8 +100,8 @@ fn main() -> Result<()> {
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("f3d"));
         if is_project {
-            options.document = forge3d_io::load_project(&f)
-                .with_context(|| format!("opening {}", f.display()))?;
+            options.document =
+                forge3d_io::load_project(&f).with_context(|| format!("opening {}", f.display()))?;
             options.project_path = Some(f);
         } else {
             let mut doc = Document::new();

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use forge3d_core::document::Document;
 use forge3d_render::wgpu;
-use forge3d_render::{ViewPreset};
+use forge3d_render::ViewPreset;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{StartCause, WindowEvent};
@@ -170,7 +170,9 @@ fn pick_adapter(
             Err(e) => last = e.to_string(),
         }
     }
-    Err(AppError::Graphics(format!("no usable GPU adapter ({last})")))
+    Err(AppError::Graphics(format!(
+        "no usable GPU adapter ({last})"
+    )))
 }
 
 fn request_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue), AppError> {
@@ -265,9 +267,10 @@ impl App {
             el.create_window(attrs)
                 .map_err(|e| AppError::Window(e.to_string()))?,
         );
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
-            Box::new(el.owned_display_handle()),
-        ));
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
+                Box::new(el.owned_display_handle()),
+            ));
         let surface = instance
             .create_surface(window.clone())
             .map_err(|e| AppError::Graphics(e.to_string()))?;
@@ -406,7 +409,10 @@ impl App {
             .path
             .as_ref()
             .and_then(|p| p.file_name())
-            .map_or_else(|| "untitled".to_string(), |n| n.to_string_lossy().into_owned());
+            .map_or_else(
+                || "untitled".to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
         let title = format!(
             "{} \u{2014} {}{}",
             self.options.title,
