@@ -179,6 +179,11 @@ pub struct AppState {
     hovered: Option<Handle>,
     picks: Vec<PickRequest>,
     drag_serial: u64,
+    /// Frames left in which the whole scene is re-framed (the viewport size is
+    /// only known after the first layout passes).
+    pub pending_frame: u8,
+    /// Whether the pending re-framing targets the selection.
+    pub pending_frame_selected: bool,
 }
 
 impl AppState {
@@ -207,6 +212,8 @@ impl AppState {
             hovered: None,
             picks: Vec::new(),
             drag_serial: 0,
+            pending_frame: 3,
+            pending_frame_selected: false,
         };
         s.frame(false);
         s
@@ -747,6 +754,11 @@ impl AppState {
         self.drag.is_some()
     }
 
+    /// Delta of the running drag (for the HUD).
+    pub fn drag_delta(&self) -> Option<DragDelta> {
+        self.drag.as_ref().map(|d| d.drag.delta())
+    }
+
     /// Handle of the running drag.
     pub fn drag_handle(&self) -> Option<Handle> {
         self.drag.as_ref().map(|d| d.drag.handle)
@@ -852,6 +864,7 @@ impl AppState {
         self.path = path;
         self.saved_revision = self.doc.revision();
         self.frame(false);
+        self.pending_frame = 3;
     }
 
     pub fn open_project(&mut self, path: &Path) {
