@@ -11,6 +11,9 @@
 //!
 //! With no subcommand (and the `gui` feature) the GUI starts.
 
+#[cfg(feature = "gui")]
+mod console;
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -369,6 +372,21 @@ fn cmd_export(input: &Path, output: &Path) -> Result<ExitCode> {
 
 #[cfg(feature = "gui")]
 fn cmd_gui(args: GuiArgs) -> Result<ExitCode> {
+    // A GUI started by double-click should not keep a console window around,
+    // unless it also serves MCP on stdio.
+    let detached = !args.mcp_stdio && console::detach_if_owned();
+    match run_gui(args) {
+        Ok(c) => Ok(c),
+        Err(e) if detached => {
+            console::report_fatal(&format!("{e:#}"), true);
+            Ok(ExitCode::FAILURE)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(feature = "gui")]
+fn run_gui(args: GuiArgs) -> Result<ExitCode> {
     use std::sync::{Arc, OnceLock};
     init_logging("info");
     let ws = workspace(args.server.workspace.as_deref())?;

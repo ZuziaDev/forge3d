@@ -30,7 +30,7 @@ pub(crate) fn export_stl(
     let plan = plan_export(scene, opts)?;
     let mut tris: Vec<[Vec3; 3]> = Vec::new();
     for p in &plan {
-        let Some(mesh) = scene.node(p.id)?.mesh.as_ref() else {
+        let Some(mesh) = scene.node(p.id)?.evaluated_mesh() else {
             continue;
         };
         let world = scene.world_transform(p.id)?;

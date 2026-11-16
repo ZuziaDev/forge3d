@@ -107,7 +107,7 @@ fn inset_region_and_individual() {
 fn bevel_single_cube_edge() {
     let m = cube(2.0);
     let e = edge(&m, 4, 5); // top-front edge
-    let r = ops::bevel_edges(&m, &[e], 0.2).unwrap();
+    let r = ops::bevel_edges(&m, &[e], 0.2, 1).unwrap();
     assert_counts(&r.mesh, 10, 15, 7);
     assert_closed_manifold(&r.mesh);
     // removes a prism with legs 0.2 x 0.2 and length 2
@@ -119,7 +119,7 @@ fn bevel_single_cube_edge() {
 fn bevel_all_cube_edges() {
     let m = cube(2.0);
     let all: Vec<EdgeId> = m.edge_ids().collect();
-    let r = ops::bevel_edges(&m, &all, 0.1).unwrap();
+    let r = ops::bevel_edges(&m, &all, 0.1, 1).unwrap();
     assert_counts(&r.mesh, 24, 48, 26);
     assert_closed_manifold(&r.mesh);
     let tris = r
@@ -135,10 +135,16 @@ fn bevel_all_cube_edges() {
 fn bevel_two_adjacent_and_three_corner_edges() {
     let m = cube(2.0);
     // two edges of the top face meeting at vertex 6
-    let r = ops::bevel_edges(&m, &[edge(&m, 5, 6), edge(&m, 6, 7)], 0.2).unwrap();
+    let r = ops::bevel_edges(&m, &[edge(&m, 5, 6), edge(&m, 6, 7)], 0.2, 1).unwrap();
     assert_closed_manifold(&r.mesh);
     // three edges meeting at vertex 6 -> triangular corner patch
-    let r = ops::bevel_edges(&m, &[edge(&m, 5, 6), edge(&m, 6, 7), edge(&m, 2, 6)], 0.2).unwrap();
+    let r = ops::bevel_edges(
+        &m,
+        &[edge(&m, 5, 6), edge(&m, 6, 7), edge(&m, 2, 6)],
+        0.2,
+        1,
+    )
+    .unwrap();
     assert_closed_manifold(&r.mesh);
     assert!(r.mesh.face_ids().any(|f| r.mesh.face_len(f) == 3));
 }
@@ -148,7 +154,7 @@ fn bevel_on_subdivided_and_grid_meshes() {
     // valence-4 vertices on a flat grid and a cylinder ring
     let g = p::plane(2.0, 4).unwrap();
     let e = g.find_edge(VertexId(7), VertexId(12)).unwrap(); // interior edge
-    let r = ops::bevel_edges(&g, &[e], 0.05).unwrap();
+    let r = ops::bevel_edges(&g, &[e], 0.05, 1).unwrap();
     assert_valid(&r.mesh);
     let c = p::cylinder(1.0, 2.0, 12).unwrap();
     let ring: Vec<EdgeId> = c
@@ -159,7 +165,7 @@ fn bevel_on_subdivided_and_grid_meshes() {
         })
         .collect();
     assert_eq!(ring.len(), 12);
-    let r = ops::bevel_edges(&c, &ring, 0.1).unwrap();
+    let r = ops::bevel_edges(&c, &ring, 0.1, 1).unwrap();
     assert_closed_manifold(&r.mesh);
     assert_eq!(r.mesh.face_count(), c.face_count() + 12);
 }
@@ -167,11 +173,13 @@ fn bevel_on_subdivided_and_grid_meshes() {
 #[test]
 fn bevel_rejects_boundary_and_large_width() {
     let g = p::plane(2.0, 1).unwrap();
-    let err = ops::bevel_edges(&g, &[EdgeId(0)], 0.1).unwrap_err();
+    let err = ops::bevel_edges(&g, &[EdgeId(0)], 0.1, 1).unwrap_err();
     assert_eq!(err.code(), "invalid_selection");
     let m = cube(2.0);
     assert_eq!(
-        ops::bevel_edges(&m, &[EdgeId(0)], 1.5).unwrap_err().code(),
+        ops::bevel_edges(&m, &[EdgeId(0)], 1.5, 1)
+            .unwrap_err()
+            .code(),
         "invalid_parameter"
     );
 }

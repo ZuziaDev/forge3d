@@ -355,7 +355,7 @@ pub(crate) fn world_meshes(
     let mut out = Vec::new();
     for p in plan {
         let node = scene.node(p.id)?;
-        let Some(mesh) = node.mesh.as_ref() else {
+        let Some(mesh) = node.evaluated_mesh() else {
             continue;
         };
         if mesh.face_count() == 0 {
@@ -371,7 +371,7 @@ pub(crate) fn world_meshes(
         let mut faces = mesh.face_index_lists();
         let (mut normals, mut face_normals) = (Vec::new(), Vec::new());
         if with_normals {
-            let cn = crease_normals(mesh, 40.0);
+            let cn = crease_normals(&mesh, node.shading_crease_deg());
             let nm = world.matrix3.inverse().transpose();
             normals = cn
                 .vertices

@@ -4,6 +4,7 @@
 use forge3d_core::command::ChangeSummary;
 use forge3d_core::document::{Document, HistoryEntryInfo};
 use forge3d_core::math::{euler_deg_from_quat, Aabb};
+use forge3d_core::modifier::{Modifier, ModifierWarning};
 use forge3d_core::scene::{Material, Scene};
 use forge3d_core::selection::SelectMode;
 use schemars::JsonSchema;
@@ -159,6 +160,30 @@ pub struct ObjectInfo {
     pub world_bounds: Option<BoundsInfo>,
     pub selected: bool,
     pub active: bool,
+    /// Smooth shading (false = flat faces).
+    #[serde(default)]
+    pub shade_smooth: bool,
+    /// With smooth shading: edges sharper than this stay hard (null = all smooth).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_smooth_angle_deg: Option<f32>,
+    /// Modifier stack in evaluation order (index = position).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modifiers: Vec<Modifier>,
+    /// Counts of the evaluated mesh (with enabled modifiers) when it differs
+    /// from the base mesh; `world_bounds` always describes the evaluated mesh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluated: Option<EvaluatedInfo>,
+}
+
+/// The evaluated (modifier) result of an object.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EvaluatedInfo {
+    pub vertex_count: usize,
+    pub edge_count: usize,
+    pub face_count: usize,
+    /// Modifiers that failed and were skipped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ModifierWarning>,
 }
 
 /// Round to 5 decimals to keep JSON short and stable.
@@ -182,6 +207,22 @@ pub fn object_info(doc: &Document, id: Uuid) -> ApiResult<ObjectInfo> {
     let n = scene.node(id)?;
     let (s, r, t) = n.transform.to_scale_rotation_translation();
     let m = n.mesh.as_ref();
+    let mut world_bounds = scene.world_bounding_box(id)?.map(BoundsInfo::from);
+    let mut evaluated = None;
+    if n.has_active_modifiers() {
+        if let Some((em, warnings)) = n.evaluated_mesh_with_warnings() {
+            let w = scene.world_transform(id)?;
+            world_bounds = em
+                .bounding_box()
+                .map(|b| BoundsInfo::from(b.transformed(&w)));
+            evaluated = Some(EvaluatedInfo {
+                vertex_count: em.vertex_count(),
+                edge_count: em.edge_count(),
+                face_count: em.face_count(),
+                warnings,
+            });
+        }
+    }
     Ok(ObjectInfo {
         id,
         name: n.name.clone(),
@@ -196,9 +237,13 @@ pub fn object_info(doc: &Document, id: Uuid) -> ApiResult<ObjectInfo> {
         vertex_count: m.map_or(0, |m| m.vertex_count()),
         edge_count: m.map_or(0, |m| m.edge_count()),
         face_count: m.map_or(0, |m| m.face_count()),
-        world_bounds: scene.world_bounding_box(id)?.map(BoundsInfo::from),
+        world_bounds,
         selected: doc.selection.is_selected(id),
         active: doc.selection.active() == Some(id),
+        shade_smooth: n.shade_smooth,
+        auto_smooth_angle_deg: n.auto_smooth_angle_deg,
+        modifiers: n.modifiers.clone(),
+        evaluated,
     })
 }
 

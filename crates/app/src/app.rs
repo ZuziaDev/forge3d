@@ -8,13 +8,15 @@ use forge3d_render::wgpu;
 use forge3d_render::ViewPreset;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{StartCause, WindowEvent};
+use winit::event::{ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+use winit::window::{Icon, Window, WindowAttributes, WindowId};
 
 use crate::error::AppError;
 use crate::gizmo::GizmoMode;
 use crate::gui::{save_png, Gui, OffscreenTarget};
+use crate::keymap;
 use crate::script::{run_script, DEMO_SCRIPT};
 
 /// Hook called once per event-loop iteration, before drawing, on the main
@@ -236,6 +238,40 @@ struct App {
     frames: u32,
     title: String,
     error: Option<AppError>,
+    modifiers: ModifiersState,
+}
+
+/// The forge3d logo (512 px PNG) shrunk to a 64 px window icon.
+pub fn window_icon() -> Option<Icon> {
+    let mut dec = png::Decoder::new(std::io::Cursor::new(include_bytes!(
+        "../../../assets/logo.png"
+    )));
+    dec.set_transformations(png::Transformations::EXPAND);
+    let mut reader = dec.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    let channels = info.color_type.samples();
+    if channels != 4 || info.bit_depth != png::BitDepth::Eight || w % 64 != 0 || h != w {
+        return None;
+    }
+    let k = w / 64;
+    let mut out = Vec::with_capacity(64 * 64 * 4);
+    for y in 0..64 {
+        for x in 0..64 {
+            let mut acc = [0u32; 4];
+            for dy in 0..k {
+                for dx in 0..k {
+                    let i = ((y * k + dy) * w + x * k + dx) * 4;
+                    for c in 0..4 {
+                        acc[c] += buf[i + c] as u32;
+                    }
+                }
+            }
+            out.extend(acc.iter().map(|v| (v / (k * k) as u32) as u8));
+        }
+    }
+    Icon::from_rgba(out, 64, 64).ok()
 }
 
 impl App {
@@ -253,12 +289,14 @@ impl App {
             next_redraw: None,
             frames: 0,
             error: None,
+            modifiers: ModifiersState::empty(),
         }
     }
 
     fn init(&mut self, el: &ActiveEventLoop) -> Result<(), AppError> {
         let attrs = WindowAttributes::default()
             .with_title(self.options.title.clone())
+            .with_window_icon(window_icon())
             .with_inner_size(LogicalSize::new(
                 self.options.window_size.0 as f64,
                 self.options.window_size.1 as f64,
@@ -465,12 +503,55 @@ impl ApplicationHandler<UserEvent> for App {
         else {
             return;
         };
+        if let WindowEvent::ModifiersChanged(m) = &event {
+            self.modifiers = m.state();
+        }
+        // Keypad keys are view shortcuts; egui cannot tell them from the digit
+        // row, so they are taken here (unless a modal operator wants digits).
+        if let WindowEvent::KeyboardInput {
+            event: key_event, ..
+        } = &event
+        {
+            if let (PhysicalKey::Code(code), Some(gui)) =
+                (key_event.physical_key, self.gui.as_mut())
+            {
+                let name = match code {
+                    KeyCode::Numpad1 => Some("1"),
+                    KeyCode::Numpad3 => Some("3"),
+                    KeyCode::Numpad5 => Some("5"),
+                    KeyCode::Numpad7 => Some("7"),
+                    KeyCode::NumpadDecimal => Some("."),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    if !gui.state.is_modal() && !gui.ctx().egui_wants_keyboard_input() {
+                        if key_event.state == ElementState::Pressed && !key_event.repeat {
+                            if let Some(a) = keymap::numpad(name, self.modifiers.control_key()) {
+                                gui.state.perform(a);
+                            }
+                            window.request_redraw();
+                        }
+                        return;
+                    }
+                }
+            }
+        }
         let response = egui_state.on_window_event(&window, &event);
         if response.repaint {
             window.request_redraw();
         }
         match event {
-            WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::CloseRequested => {
+                if let Some(gui) = self.gui.as_mut() {
+                    gui.state.perform(crate::state::Action::Quit);
+                    if gui.state.should_exit {
+                        el.exit();
+                    }
+                    window.request_redraw();
+                } else {
+                    el.exit();
+                }
+            }
             WindowEvent::Resized(size) => {
                 self.resize(size.width, size.height);
                 window.request_redraw();
@@ -508,5 +589,13 @@ impl ApplicationHandler<UserEvent> for App {
             Some(t) => ControlFlow::WaitUntil(t),
             None => ControlFlow::Wait,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_embedded_logo_becomes_a_window_icon() {
+        assert!(super::window_icon().is_some());
     }
 }

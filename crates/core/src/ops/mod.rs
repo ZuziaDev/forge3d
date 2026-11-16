@@ -13,7 +13,9 @@ mod loopcut;
 mod merge;
 mod mirror;
 mod normals;
+mod shell;
 mod subdivide;
+mod topology;
 
 use glam::{Affine3A, Vec3};
 
@@ -21,7 +23,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::mesh::{EdgeId, ElementKind, FaceId, Mesh, VertexId};
 use crate::selection::ElementSelection;
 
-pub use bevel::bevel_edges;
+pub use bevel::{bevel_edges, MAX_BEVEL_SEGMENTS};
 pub use boolean::{boolean, BooleanOp};
 pub use extrude::extrude_faces;
 pub use inset::inset_faces;
@@ -29,7 +31,12 @@ pub use loopcut::loop_cut;
 pub use merge::{merge_at_center, merge_by_distance};
 pub use mirror::mirror;
 pub use normals::{flip_normals, recalculate_normals};
+pub use shell::{array, solidify, MAX_ARRAY_COUNT};
 pub use subdivide::{subdivide_catmull_clark, MAX_SUBDIVISION_LEVELS};
+pub use topology::{
+    bridge_edge_loops, dissolve, fill_holes, poke_faces, smooth_vertices, split_faces,
+    triangulate_faces, tris_to_quads, MAX_SMOOTH_ITERATIONS,
+};
 
 /// Result of an element-level operation: the new mesh and the elements that
 /// should be selected afterwards (indices refer to the new mesh).

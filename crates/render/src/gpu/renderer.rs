@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use forge3d_core::math::Aabb;
 use forge3d_core::mesh::Mesh;
-use forge3d_core::scene::{Material, Scene};
+use forge3d_core::scene::{Material, Node, Scene};
 use forge3d_core::selection::{SelectMode, Selection};
 use glam::{Affine3A, Vec2, Vec4};
 use uuid::Uuid;
@@ -17,7 +17,10 @@ use super::uniforms::{
 };
 use crate::camera::Camera;
 use crate::error::{RenderError, RenderResult};
-use crate::extract::{object_highlight, EditHighlight, MeshGeometry, ObjectHighlight};
+use crate::extract::{
+    display_mesh, is_edited, node_crease_deg, object_highlight, EditHighlight, MeshGeometry,
+    ObjectHighlight,
+};
 use crate::image::RgbaImage;
 use crate::options::{style, RenderOptions, ViewOptions};
 use crate::pick::{nearest_face_elements, PickHit};
@@ -75,7 +78,9 @@ struct OverlayBuffers {
 /// Cached GPU data of one mesh node.
 struct MeshEntry {
     fingerprint: u64,
-    smooth: bool,
+    crease_deg: f32,
+    /// Whether the geometry is the evaluated (modified) mesh, not the cage.
+    evaluated: bool,
     /// Local-space geometry (kept for picking resolution and overlays).
     geometry: MeshGeometry,
     triangles: Option<(wgpu::Buffer, u32)>,
@@ -118,6 +123,20 @@ impl Fnv {
     fn word(&mut self, w: u32) {
         self.0 = (self.0 ^ w as u64).wrapping_mul(0x0000_0100_0000_01b3);
     }
+}
+
+/// Fingerprint of what a node displays: its base mesh plus, when the
+/// evaluated mesh is shown, the modifier stack.
+fn node_fingerprint(node: &Node, mesh: &Mesh, modified: bool) -> u64 {
+    let base = mesh_fingerprint(mesh);
+    if !modified {
+        return base;
+    }
+    let mut h = Fnv(base);
+    for b in format!("{:?}", node.modifiers).bytes() {
+        h.word(b as u32);
+    }
+    h.0
 }
 
 /// Fingerprint of a mesh's geometry and topology.
@@ -593,8 +612,8 @@ impl GpuRenderer {
         Some((buf, data.len() as u32))
     }
 
-    fn build_entry(&self, mesh: &Mesh, fingerprint: u64, smooth: bool) -> MeshEntry {
-        let geometry = MeshGeometry::from_mesh(mesh, smooth);
+    fn build_entry(&self, mesh: &Mesh, fingerprint: u64, crease_deg: f32) -> MeshEntry {
+        let geometry = MeshGeometry::from_mesh_shaded(mesh, crease_deg);
         let verts: Vec<MeshVertex> = (0..geometry.positions.len())
             .map(|i| MeshVertex {
                 pos: geometry.positions[i].to_array(),
@@ -623,7 +642,8 @@ impl GpuRenderer {
         let vb = wgpu::BufferUsages::VERTEX;
         MeshEntry {
             fingerprint,
-            smooth,
+            crease_deg,
+            evaluated: false,
             triangles: self.buffer_init("forge3d mesh triangles", &verts, vb),
             wire: self.buffer_init("forge3d mesh wire", &wire, vb),
             vertices: self.buffer_init("forge3d mesh vertices", &points, vb),
@@ -714,30 +734,38 @@ impl GpuRenderer {
             let Some(mesh) = node.mesh.as_ref() else {
                 continue;
             };
-            if !node.visible || (mesh.face_count() == 0 && mesh.edge_count() == 0) {
+            let edited = selection.is_some_and(|s| is_edited(s, id));
+            let modified = !edited && node.has_active_modifiers();
+            if !node.visible || (!modified && mesh.face_count() == 0 && mesh.edge_count() == 0) {
                 continue;
             }
             let Ok(world) = scene.world_transform(id) else {
                 continue;
             };
-            seen.insert(id);
-            let check_geometry = !same_rev || !self.meshes.contains_key(&id);
-            if check_geometry {
-                let fp = mesh_fingerprint(mesh);
-                let fresh = self
+            let crease = node_crease_deg(node, smooth);
+            let check_geometry = !same_rev
+                || self
                     .meshes
                     .get(&id)
-                    .is_some_and(|e| e.fingerprint == fp && e.smooth == smooth);
+                    .is_none_or(|e| e.evaluated != modified || e.crease_deg != crease);
+            if check_geometry {
+                let fp = node_fingerprint(node, mesh, modified);
+                let fresh = self.meshes.get(&id).is_some_and(|e| {
+                    e.fingerprint == fp && e.crease_deg == crease && e.evaluated == modified
+                });
                 if fresh {
                     stats.reused += 1;
                 } else {
-                    let entry = self.build_entry(mesh, fp, smooth);
+                    let shown = display_mesh(node, selection);
+                    let mut entry = self.build_entry(&shown, fp, crease);
+                    entry.evaluated = modified;
                     self.meshes.insert(id, entry);
                     stats.uploaded += 1;
                 }
             } else {
                 stats.reused += 1;
             }
+            seen.insert(id);
             let highlight = if show_sel {
                 object_highlight(selection, id, mesh)
             } else {

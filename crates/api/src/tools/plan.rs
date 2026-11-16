@@ -460,11 +460,67 @@ pub(crate) fn mesh_edit(doc: &Document, p: MeshEditParams) -> ApiResult<Plan> {
             depth,
             individual,
         },
-        MeshOperation::Bevel { edges, width } => CommandSpec::Bevel {
+        MeshOperation::Bevel {
+            edges,
+            width,
+            segments,
+        } => CommandSpec::Bevel {
             object,
             edges,
             width,
+            segments,
         },
+        MeshOperation::Solidify { thickness } => CommandSpec::Solidify { object, thickness },
+        MeshOperation::BridgeEdgeLoops { edges } => CommandSpec::BridgeEdgeLoops { object, edges },
+        MeshOperation::FillHoles {
+            edges,
+            triangle_fan,
+        } => CommandSpec::FillHoles {
+            object,
+            edges,
+            triangle_fan,
+        },
+        MeshOperation::Dissolve { kind, indices } => CommandSpec::Dissolve {
+            object,
+            kind,
+            indices,
+        },
+        MeshOperation::Triangulate { faces } => CommandSpec::Triangulate { object, faces },
+        MeshOperation::TrisToQuads {
+            faces,
+            max_angle_deg,
+        } => CommandSpec::TrisToQuads {
+            object,
+            faces,
+            max_angle_deg,
+        },
+        MeshOperation::Poke { faces, offset } => CommandSpec::PokeFaces {
+            object,
+            faces,
+            offset,
+        },
+        MeshOperation::Smooth {
+            vertices,
+            factor,
+            iterations,
+        } => CommandSpec::SmoothVertices {
+            object,
+            vertices,
+            factor,
+            iterations,
+        },
+        MeshOperation::Separate { faces, name } => {
+            let spec = CommandSpec::Separate {
+                object,
+                faces,
+                name,
+            };
+            return Ok(Plan::spec(spec)?.with_post(move |doc, changes| {
+                let mut v = mesh_state(doc, id, 200)?;
+                v["created"] = json!(objects_post(created_ids)(doc, changes)?["objects"]);
+                Ok(v)
+            }));
+        }
         MeshOperation::LoopCut { edge, cuts, factor } => CommandSpec::LoopCut {
             object,
             edge,
@@ -681,6 +737,64 @@ pub(crate) fn mesh_select(doc: &Document, p: MeshSelectParams) -> ApiResult<Plan
         v["truncated"] = json!(set.len() > max_indices);
         Ok(v)
     }))
+}
+
+pub(crate) fn modifier_edit(doc: &Document, p: ModifierEditParams) -> ApiResult<Plan> {
+    let id = active_mesh_object(doc, &p.object)?;
+    doc.scene.mesh(id)?;
+    let object = Some(id);
+    let spec = match p.action {
+        ModifierAction::Add {
+            modifier,
+            enabled,
+            index,
+        } => CommandSpec::AddModifier {
+            object,
+            modifier,
+            enabled,
+            index,
+        },
+        ModifierAction::Set {
+            index,
+            modifier,
+            enabled,
+        } => CommandSpec::SetModifier {
+            object,
+            index,
+            modifier,
+            enabled,
+        },
+        ModifierAction::Remove { index } => CommandSpec::RemoveModifier { object, index },
+        ModifierAction::Move { from, to } => CommandSpec::MoveModifier { object, from, to },
+        ModifierAction::Apply { index } => CommandSpec::ApplyModifier { object, index },
+    };
+    Ok(Plan::spec(spec)?.with_post(move |doc, _| Ok(json!({ "object": object_info(doc, id)? }))))
+}
+
+pub(crate) fn object_shading(doc: &Document, p: ObjectShadingParams) -> ApiResult<Plan> {
+    let objects = resolve_refs(&doc.scene, &p.objects)?;
+    Ok(Plan::spec(CommandSpec::SetShading {
+        objects,
+        smooth: p.smooth,
+        auto_smooth_angle_deg: p.auto_smooth_angle_deg,
+    })?
+    .with_post(objects_post(modified_ids)))
+}
+
+pub(crate) fn object_join(doc: &Document, p: ObjectJoinParams) -> ApiResult<Plan> {
+    let objects = resolve_refs(&doc.scene, &p.objects)?;
+    let into = resolve_opt(&doc.scene, &p.into)?;
+    Ok(
+        Plan::spec(CommandSpec::JoinObjects { objects, into })?.with_post(|doc, changes| {
+            let mut v = objects_post(modified_ids)(doc, changes)?;
+            v["joined"] = json!(changes
+                .deleted
+                .iter()
+                .map(|o| o.name.clone())
+                .collect::<Vec<_>>());
+            Ok(v)
+        }),
+    )
 }
 
 pub(crate) fn boolean_op(doc: &Document, p: BooleanOpParams) -> ApiResult<Plan> {

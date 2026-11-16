@@ -20,8 +20,6 @@ const COMPONENT_U32: u32 = 5125;
 const COMPONENT_F32: u32 = 5126;
 const TARGET_ARRAY_BUFFER: u32 = 34962;
 const TARGET_ELEMENT_ARRAY_BUFFER: u32 = 34963;
-/// Faces whose normals differ by more than this angle get separate vertices.
-const CREASE_DEG: f32 = 40.0;
 
 /// Render a finite `f32` as the shortest JSON number that parses back to the
 /// same `f32`.
@@ -122,6 +120,7 @@ fn material_json(m: &Material) -> (Value, bool) {
 /// or `None` when the mesh has no triangles.
 fn mesh_json(
     mesh: &Mesh,
+    crease_deg: f32,
     name: &str,
     material: Option<usize>,
     with_normals: bool,
@@ -132,7 +131,7 @@ fn mesh_json(
     let mut indices: Vec<u32> = Vec::new();
 
     if with_normals {
-        let cn = crease_normals(mesh, CREASE_DEG);
+        let cn = crease_normals(mesh, crease_deg);
         for (v, n) in &cn.vertices {
             positions.push(pos_to_y_up(mesh.position(forge3d_core::mesh::VertexId(*v))));
             normals.push(pos_to_y_up(*n));
@@ -285,7 +284,7 @@ pub(crate) fn export_gltf(
     for (i, p) in plan.iter().enumerate() {
         let node = scene.node(p.id)?;
         let mut mesh_index = None;
-        if let Some(mesh) = node.mesh.as_ref() {
+        if let Some(mesh) = node.evaluated_mesh() {
             let material = node.material.as_ref().map(|m| {
                 *material_ids.entry(material_key(m)).or_insert_with(|| {
                     let (j, needs) = material_json(m);
@@ -294,7 +293,14 @@ pub(crate) fn export_gltf(
                     materials.len() - 1
                 })
             });
-            if let Some(mj) = mesh_json(mesh, &node.name, material, opts.normals, &mut bin) {
+            if let Some(mj) = mesh_json(
+                &mesh,
+                node.shading_crease_deg(),
+                &node.name,
+                material,
+                opts.normals,
+                &mut bin,
+            ) {
                 meshes.push(mj);
                 mesh_index = Some(meshes.len() - 1);
             }

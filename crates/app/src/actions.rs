@@ -25,9 +25,51 @@ pub enum MeshTool {
     Mirror(Axis),
     RecalculateNormals,
     FlipNormals,
+    Solidify,
+    BridgeEdgeLoops,
+    FillHoles,
+    Dissolve,
+    Triangulate,
+    TrisToQuads,
+    PokeFaces,
+    SmoothVertices,
+    Separate,
+    JoinObjects,
 }
 
 impl MeshTool {
+    /// Tools listed in the Mesh menu and the command palette.
+    pub const MENU: &'static [MeshTool] = &[
+        MeshTool::Extrude,
+        MeshTool::Inset,
+        MeshTool::Bevel,
+        MeshTool::LoopCut,
+        MeshTool::Subdivide,
+        MeshTool::Solidify,
+        MeshTool::BridgeEdgeLoops,
+        MeshTool::FillHoles,
+        MeshTool::Dissolve,
+        MeshTool::Triangulate,
+        MeshTool::TrisToQuads,
+        MeshTool::PokeFaces,
+        MeshTool::SmoothVertices,
+        MeshTool::MergeCenter,
+        MeshTool::MergeByDistance,
+        MeshTool::DeleteElements,
+        MeshTool::Separate,
+        MeshTool::JoinObjects,
+        MeshTool::Mirror(Axis::X),
+        MeshTool::Mirror(Axis::Y),
+        MeshTool::Mirror(Axis::Z),
+        MeshTool::RecalculateNormals,
+        MeshTool::FlipNormals,
+    ];
+
+    /// Tools that have an interactive modal version on a key.
+    pub fn is_modal(self) -> bool {
+        matches!(self, MeshTool::Extrude | MeshTool::Inset | MeshTool::Bevel)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             MeshTool::Extrude => "Extrude",
@@ -43,6 +85,16 @@ impl MeshTool {
             MeshTool::Mirror(Axis::Z) => "Mirror Z",
             MeshTool::RecalculateNormals => "Recalculate normals",
             MeshTool::FlipNormals => "Flip normals",
+            MeshTool::Solidify => "Solidify",
+            MeshTool::BridgeEdgeLoops => "Bridge edge loops",
+            MeshTool::FillHoles => "Fill holes",
+            MeshTool::Dissolve => "Dissolve",
+            MeshTool::Triangulate => "Triangulate",
+            MeshTool::TrisToQuads => "Triangles to quads",
+            MeshTool::PokeFaces => "Poke faces",
+            MeshTool::SmoothVertices => "Smooth vertices",
+            MeshTool::Separate => "Separate selection",
+            MeshTool::JoinObjects => "Join objects",
         }
     }
 }
@@ -55,6 +107,12 @@ pub struct ToolParams {
     pub inset_depth: f32,
     pub inset_individual: bool,
     pub bevel_width: f32,
+    pub bevel_segments: u32,
+    pub solidify_thickness: f32,
+    pub fill_triangle_fan: bool,
+    pub poke_offset: f32,
+    pub smooth_factor: f32,
+    pub smooth_iterations: u32,
     pub loop_cuts: u32,
     pub loop_factor: f32,
     pub subdivide_levels: u32,
@@ -72,6 +130,12 @@ impl Default for ToolParams {
             inset_depth: 0.0,
             inset_individual: false,
             bevel_width: 0.1,
+            bevel_segments: 1,
+            solidify_thickness: 0.1,
+            fill_triangle_fan: false,
+            poke_offset: 0.0,
+            smooth_factor: 0.5,
+            smooth_iterations: 1,
             loop_cuts: 1,
             loop_factor: 0.5,
             subdivide_levels: 1,
@@ -115,6 +179,54 @@ pub fn mesh_tool_spec(
             object: Some(object),
             edges: None,
             width: p.bevel_width,
+            segments: p.bevel_segments.max(1),
+        },
+        MeshTool::Solidify => CommandSpec::Solidify {
+            object: Some(object),
+            thickness: p.solidify_thickness,
+        },
+        MeshTool::BridgeEdgeLoops => CommandSpec::BridgeEdgeLoops {
+            object: Some(object),
+            edges: None,
+        },
+        MeshTool::FillHoles => CommandSpec::FillHoles {
+            object: Some(object),
+            edges: None,
+            triangle_fan: p.fill_triangle_fan,
+        },
+        MeshTool::Dissolve => CommandSpec::Dissolve {
+            object: Some(object),
+            kind: doc.selection.mode.element_kind(),
+            indices: None,
+        },
+        MeshTool::Triangulate => CommandSpec::Triangulate {
+            object: Some(object),
+            faces: None,
+        },
+        MeshTool::TrisToQuads => CommandSpec::TrisToQuads {
+            object: Some(object),
+            faces: None,
+            max_angle_deg: 40.0,
+        },
+        MeshTool::PokeFaces => CommandSpec::PokeFaces {
+            object: Some(object),
+            faces: None,
+            offset: p.poke_offset,
+        },
+        MeshTool::SmoothVertices => CommandSpec::SmoothVertices {
+            object: Some(object),
+            vertices: None,
+            factor: p.smooth_factor,
+            iterations: p.smooth_iterations.max(1),
+        },
+        MeshTool::Separate => CommandSpec::Separate {
+            object: Some(object),
+            faces: None,
+            name: None,
+        },
+        MeshTool::JoinObjects => CommandSpec::JoinObjects {
+            objects: None,
+            into: Some(object),
         },
         MeshTool::LoopCut => {
             let edge = doc

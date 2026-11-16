@@ -229,6 +229,125 @@ fn undo_redo_every_command() {
             r#"{{"op":"set_mesh_data","object":"{a}","mesh":{{"positions":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],"faces":[[0,1,2,3]]}}}}"#
         ),
     );
+    // modeling ops on a fresh cube "M"
+    let m = doc
+        .execute_spec(
+            spec(r#"{"op":"create_primitive","primitive":{"type":"cube"},"name":"M"}"#),
+            Origin::Gui,
+        )
+        .unwrap()
+        .created[0]
+        .id;
+    run(
+        &mut doc,
+        format!(r#"{{"op":"bevel","object":"{m}","edges":[0,1],"width":0.2,"segments":3}}"#),
+    );
+    run(
+        &mut doc,
+        format!(
+            r#"{{"op":"smooth_vertices","object":"{m}","vertices":[0,1,2],"factor":0.3,"iterations":2}}"#
+        ),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"triangulate","object":"{m}","faces":[0]}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"tris_to_quads","object":"{m}"}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"poke_faces","object":"{m}","faces":[0],"offset":0.1}}"#),
+    );
+    let last_v = doc.scene.mesh(m).unwrap().vertex_count() - 1;
+    run(
+        &mut doc,
+        format!(r#"{{"op":"dissolve","object":"{m}","kind":"vertex","indices":[{last_v}]}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"separate","object":"{m}","faces":[0],"name":"Part"}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"delete_elements","object":"{m}","kind":"face","indices":[0]}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"fill_holes","object":"{m}","triangle_fan":true}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"solidify","object":"{m}","thickness":0.05}}"#),
+    );
+    let tube = doc
+        .execute_spec(
+            spec(r#"{"op":"create_primitive","primitive":{"type":"cylinder","segments":8},"name":"Tube"}"#),
+            Origin::Gui,
+        )
+        .unwrap()
+        .created[0]
+        .id;
+    let caps: Vec<u32> = {
+        let mm = doc.scene.mesh(tube).unwrap();
+        mm.face_ids()
+            .filter(|&f| mm.face_len(f) == 8)
+            .map(|f| f.0)
+            .collect()
+    };
+    run(
+        &mut doc,
+        format!(r#"{{"op":"delete_elements","object":"{tube}","kind":"face","indices":{caps:?}}}"#),
+    );
+    let all_edges: Vec<u32> = (0..doc.scene.mesh(tube).unwrap().edge_count() as u32).collect();
+    run(
+        &mut doc,
+        format!(r#"{{"op":"bridge_edge_loops","object":"{tube}","edges":{all_edges:?}}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"dissolve","object":"{tube}","kind":"face","indices":[0,1]}}"#),
+    );
+    // modifier stack + shading
+    run(
+        &mut doc,
+        format!(
+            r#"{{"op":"add_modifier","object":"{tube}","modifier":{{"type":"mirror","axis":"x"}}}}"#
+        ),
+    );
+    run(
+        &mut doc,
+        format!(
+            r#"{{"op":"add_modifier","object":"{tube}","modifier":{{"type":"subdivision","levels":1}},"index":0}}"#
+        ),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"set_modifier","object":"{tube}","index":1,"enabled":false}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"move_modifier","object":"{tube}","from":0,"to":1}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"apply_modifier","object":"{tube}","index":1}}"#),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"remove_modifier","object":"{tube}","index":0}}"#),
+    );
+    run(
+        &mut doc,
+        format!(
+            r#"{{"op":"set_shading","objects":["{tube}"],"smooth":true,"auto_smooth_angle_deg":30}}"#
+        ),
+    );
+    run(
+        &mut doc,
+        format!(r#"{{"op":"join_objects","objects":["{m}","{tube}"],"into":"{m}"}}"#),
+    );
     // boolean between two fresh cubes
     let c1 = doc
         .execute_spec(
@@ -270,7 +389,7 @@ fn undo_redo_every_command() {
     // Every CommandSpec variant in the JSON schema must have been exercised.
     let schema = CommandSpec::json_schema().to_string();
     let all: BTreeSet<String> = schema_ops(&schema);
-    assert!(all.len() >= 38, "{all:?}");
+    assert!(all.len() >= 54, "{all:?}");
     let missing: Vec<_> = all.difference(&covered).collect();
     assert!(
         missing.is_empty(),

@@ -4,11 +4,12 @@
 //! triangle corners with normals and source face ids, the real mesh edges
 //! (not triangulation diagonals) and a face → corner/edge table for picking.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use forge3d_core::math::{newell_normal_slice, Aabb};
 use forge3d_core::mesh::{EdgeId, FaceId, Mesh};
-use forge3d_core::scene::{Material, Scene};
+use forge3d_core::scene::{Material, Node, Scene};
 use forge3d_core::selection::{SelectMode, Selection};
 use glam::{Affine3A, Mat3, Vec3};
 use uuid::Uuid;
@@ -39,6 +40,17 @@ impl MeshGeometry {
     /// Build from a mesh. Normals are computed from the positions (Newell),
     /// flat per face or smooth (area-weighted per vertex).
     pub fn from_mesh(mesh: &Mesh, smooth: bool) -> MeshGeometry {
+        Self::from_mesh_shaded(mesh, if smooth { 180.0 } else { 0.0 })
+    }
+
+    /// Build with crease-angle shading: a corner's normal averages the
+    /// (area-weighted) normals of the faces around its vertex that differ
+    /// from its own face by at most `crease_deg`. 0 = flat, 180 = fully
+    /// smooth, in between = auto smooth with hard edges kept sharp.
+    pub fn from_mesh_shaded(mesh: &Mesh, crease_deg: f32) -> MeshGeometry {
+        let smooth = crease_deg > 0.0;
+        let split = smooth && crease_deg < 180.0;
+        let cos_crease = crease_deg.to_radians().cos();
         let vertices = mesh.positions();
         let nf = mesh.face_count();
         let mut face_offsets = Vec::with_capacity(nf + 1);
@@ -46,6 +58,7 @@ impl MeshGeometry {
         let mut face_edges = Vec::with_capacity(mesh.loop_count());
         let mut face_normals = Vec::with_capacity(nf);
         let mut vertex_normals = vec![Vec3::ZERO; if smooth { vertices.len() } else { 0 }];
+        let mut weighted = Vec::with_capacity(if split { nf } else { 0 });
         let mut pts = Vec::new();
         face_offsets.push(0);
         for f in mesh.face_ids() {
@@ -62,11 +75,24 @@ impl MeshGeometry {
                     vertex_normals[v.index()] += n;
                 }
             }
+            if split {
+                weighted.push(n);
+            }
             face_normals.push(n.normalize_or_zero());
         }
         for n in &mut vertex_normals {
             *n = n.normalize_or_zero();
         }
+        // Auto smooth: per (face, vertex) normal from faces within the crease.
+        let corner_normal = |f: FaceId, v: u32| -> Vec3 {
+            let nf = face_normals[f.index()];
+            mesh.vertex_faces(forge3d_core::mesh::VertexId(v))
+                .into_iter()
+                .filter(|g| *g == f || face_normals[g.index()].dot(nf) >= cos_crease - 1e-6)
+                .map(|g| weighted[g.index()])
+                .sum::<Vec3>()
+                .normalize_or_zero()
+        };
         let tris = mesh.triangulate_with_faces();
         let mut positions = Vec::with_capacity(tris.len() * 3);
         let mut normals = Vec::with_capacity(tris.len() * 3);
@@ -83,7 +109,9 @@ impl MeshGeometry {
             };
             for (k, &vi) in t.iter().enumerate() {
                 positions.push(p[k]);
-                let n = if smooth {
+                let n = if split {
+                    corner_normal(f, vi)
+                } else if smooth {
                     vertex_normals[vi as usize]
                 } else {
                     fallback
@@ -279,6 +307,30 @@ pub fn is_edited(selection: &Selection, id: Uuid) -> bool {
         && (selection.is_selected(id) || selection.elements(id).is_some_and(|e| !e.is_empty()))
 }
 
+/// The mesh to display for a node: the base mesh (the editing cage, whose
+/// element indices match the selection) while the object is in edit mode,
+/// otherwise the evaluated mesh with all enabled modifiers applied.
+pub fn display_mesh<'a>(node: &'a Node, selection: Option<&Selection>) -> Cow<'a, Mesh> {
+    let Some(mesh) = node.mesh.as_ref() else {
+        return Cow::Owned(Mesh::new());
+    };
+    if selection.is_some_and(|s| is_edited(s, node.id())) {
+        Cow::Borrowed(mesh)
+    } else {
+        node.evaluated_mesh().unwrap_or(Cow::Borrowed(mesh))
+    }
+}
+
+/// Shading crease angle for a node: the node's own shading, or fully smooth
+/// when the view forces smooth shading.
+pub fn node_crease_deg(node: &Node, view_smooth: bool) -> f32 {
+    if view_smooth && !node.shade_smooth {
+        180.0
+    } else {
+        node.shading_crease_deg()
+    }
+}
+
 /// Selection highlight of object `id`.
 pub fn object_highlight(selection: Option<&Selection>, id: Uuid, mesh: &Mesh) -> ObjectHighlight {
     let Some(sel) = selection else {
@@ -305,13 +357,15 @@ impl SceneDrawData {
             let Some(mesh) = node.mesh.as_ref() else {
                 continue;
             };
-            if mesh.face_count() == 0 && mesh.edge_count() == 0 {
+            let shown = display_mesh(node, selection);
+            if shown.face_count() == 0 && shown.edge_count() == 0 {
                 continue;
             }
             let Ok(world) = scene.world_transform(id) else {
                 continue;
             };
-            let geometry = MeshGeometry::from_mesh(mesh, smooth).transformed(&world);
+            let geometry = MeshGeometry::from_mesh_shaded(&shown, node_crease_deg(node, smooth))
+                .transformed(&world);
             if let Some(b) = geometry.bounds() {
                 bounds = Some(bounds.map_or(b, |o| o.union(&b)));
             }

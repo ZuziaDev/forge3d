@@ -6,6 +6,8 @@
 //! * [`primitives`] – parametric shapes,
 //! * [`ops`] – mesh editing operations (extrude, inset, bevel, loop cut,
 //!   Catmull–Clark, merge, delete, mirror, boolean, normals),
+//! * [`modifier`] – non-destructive modifier stack (mirror, array,
+//!   subdivision, solidify, bevel, triangulate),
 //! * [`scene`] – scene graph with nodes, transforms and PBR materials,
 //! * [`selection`] – selection model and queries,
 //! * [`command`], [`commands`], [`document`] – undoable command system with
@@ -39,6 +41,7 @@ pub mod document;
 pub mod error;
 pub mod math;
 pub mod mesh;
+pub mod modifier;
 pub mod ops;
 pub mod primitives;
 pub mod scene;
@@ -54,6 +57,7 @@ pub mod prelude {
     pub use crate::mesh::{
         EdgeId, ElementKind, FaceId, LoopId, Mesh, MeshData, ValidationReport, VertexId,
     };
+    pub use crate::modifier::{Modifier, ModifierKind};
     pub use crate::ops::BooleanOp;
     pub use crate::primitives::PrimitiveSpec;
     pub use crate::scene::{Material, Node, Scene};

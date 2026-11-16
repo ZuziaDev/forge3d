@@ -24,6 +24,7 @@ use crate::actions::{
 use crate::camera_input;
 use crate::error::AppError;
 use crate::gizmo::{DragDelta, GizmoDrag, GizmoMode, Handle};
+use crate::modal::{Modal, ModalKind};
 use crate::target::GizmoTarget;
 
 /// Severity of a status message.
@@ -87,6 +88,18 @@ struct ActiveDrag {
     serial: u64,
 }
 
+/// A running modal operator with its live preview on a scratch document.
+struct ActiveModal {
+    modal: Modal,
+    target: Option<GizmoTarget>,
+    scratch: Document,
+    applied: bool,
+    base_revision: u64,
+    serial: u64,
+    /// The command the current preview corresponds to.
+    last_spec: Option<CommandSpec>,
+}
+
 /// Kinds of the file dialog window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileDialogKind {
@@ -128,6 +141,55 @@ pub struct UiState {
     pub show_history: bool,
     pub show_outliner: bool,
     pub show_properties: bool,
+    /// Open popup (Shift+A add menu, X delete menu, F3 command search).
+    pub popup: Option<Popup>,
+    /// Query typed into the command palette.
+    pub palette_query: String,
+    /// Highlighted palette row.
+    pub palette_sel: usize,
+    /// Unsaved-changes question waiting for an answer.
+    pub confirm: Option<Guarded>,
+    /// Active tab of the properties panel.
+    pub properties_tab: PropertiesTab,
+}
+
+/// Popups that open at the cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopupKind {
+    Add,
+    Delete,
+    Palette,
+}
+
+/// An open popup; `pos` is filled in by the UI (cursor position) on first draw.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Popup {
+    pub kind: PopupKind,
+    pub pos: Option<(f32, f32)>,
+}
+
+/// Properties panel tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PropertiesTab {
+    #[default]
+    Object,
+    Modifiers,
+}
+
+/// Actions that would discard unsaved changes and therefore ask first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Guarded {
+    New,
+    Open,
+    Exit,
+}
+
+/// Answer to the unsaved-changes question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmChoice {
+    Save,
+    Discard,
+    Cancel,
 }
 
 /// High-level user actions shared by menus, toolbar buttons and shortcuts.
@@ -154,8 +216,22 @@ pub enum Action {
     AddPrimitive(PrimitiveSpec),
     MeshTool(MeshTool),
     Boolean(BooleanOp),
-    /// Escape: cancel a running drag.
+    /// Escape: cancel a running drag or modal operator.
     Cancel,
+    /// G / R / S / E / I / Ctrl+B: start a modal operator at the cursor.
+    Modal(ModalKind),
+    /// Shift+D: duplicate, then grab the copies.
+    DuplicateGrab,
+    Popup(PopupKind),
+    Hide,
+    UnhideAll,
+    New,
+    Open,
+    Save,
+    SaveAs,
+    Import,
+    Export,
+    Quit,
 }
 
 /// The whole GUI state.
@@ -172,10 +248,13 @@ pub struct AppState {
     /// Project file the document was opened from / saved to.
     pub path: Option<PathBuf>,
     pub should_exit: bool,
+    /// Last known pointer position in viewport points (modal operators start here).
+    pub cursor: Vec2,
     last_edit_mode: SelectMode,
     saved_revision: u64,
     preview: Option<Preview>,
     drag: Option<ActiveDrag>,
+    modal: Option<ActiveModal>,
     hovered: Option<Handle>,
     picks: Vec<PickRequest>,
     drag_serial: u64,
@@ -205,10 +284,12 @@ impl AppState {
             viewport: (1280, 720),
             path: None,
             should_exit: false,
+            cursor: Vec2::new(640.0, 360.0),
             last_edit_mode: SelectMode::Face,
             saved_revision,
             preview: None,
             drag: None,
+            modal: None,
             hovered: None,
             picks: Vec::new(),
             drag_serial: 0,
@@ -380,6 +461,7 @@ impl AppState {
     /// Finish a drag and any preview before an unrelated command.
     fn end_interactions(&mut self) {
         self.drag = None;
+        self.modal = None;
         self.preview = None;
     }
 
@@ -596,6 +678,289 @@ impl AppState {
         });
     }
 
+    // ----- modal operators (G / R / S / E / I / Ctrl+B) -------------------------
+
+    pub fn is_modal(&self) -> bool {
+        self.modal.is_some()
+    }
+
+    /// HUD line of the running modal operator.
+    pub fn modal_hud(&self) -> Option<String> {
+        self.modal.as_ref().map(|m| m.modal.hud())
+    }
+
+    /// Start a modal operator on the current selection with the pointer at
+    /// [`AppState::cursor`].
+    pub fn begin_modal(&mut self, kind: ModalKind) -> bool {
+        self.end_interactions();
+        let Some(target) = GizmoTarget::compute(&self.doc) else {
+            self.report(&AppError::Usage(
+                "nothing to transform: select an object (or elements in edit mode) first".into(),
+            ));
+            return false;
+        };
+        if !kind.is_transform() && self.doc.selection.mode == SelectMode::Object {
+            self.report(&AppError::Usage(format!(
+                "{} works on mesh elements: press Tab to enter edit mode",
+                kind.label()
+            )));
+            return false;
+        }
+        let axes = match kind {
+            ModalKind::Scale => target.frame(GizmoMode::Scale).axes,
+            _ => [Vec3::X, Vec3::Y, Vec3::Z],
+        };
+        let modal = Modal::begin(kind, target.origin, axes, self.cursor);
+        self.drag_serial += 1;
+        self.modal = Some(ActiveModal {
+            modal,
+            target: kind.is_transform().then_some(target),
+            scratch: Document::from_state(self.doc.state()),
+            applied: false,
+            base_revision: self.doc.revision(),
+            serial: self.drag_serial,
+            last_spec: None,
+        });
+        self.status = Status::info(format!(
+            "{}: move the mouse, X/Y/Z lock an axis (Shift = plane), type a value, Enter confirms, Esc cancels",
+            kind.label()
+        ));
+        true
+    }
+
+    fn modal_spec(&self, a: &ActiveModal) -> Result<CommandSpec, AppError> {
+        let m = &a.modal;
+        if let Some(t) = &a.target {
+            return Ok(t.spec(m.delta()));
+        }
+        let mut p = self.params.clone();
+        let tool = match m.kind {
+            ModalKind::Extrude => {
+                p.extrude_distance = m.scalar();
+                MeshTool::Extrude
+            }
+            ModalKind::Inset => {
+                p.inset_thickness = m.scalar().max(0.0);
+                MeshTool::Inset
+            }
+            _ => {
+                p.bevel_width = m.scalar().max(0.0);
+                MeshTool::Bevel
+            }
+        };
+        mesh_tool_spec(tool, &self.doc, &p)
+    }
+
+    /// Recompute the live preview of `a`. False when it failed (and was reported).
+    fn refresh_modal(&mut self, a: &mut ActiveModal) -> bool {
+        let cam = self.camera.to_camera();
+        a.modal.update(&cam, self.viewport);
+        if a.applied {
+            if let Err(e) = a.scratch.undo() {
+                self.report_core(&e);
+                return false;
+            }
+            a.applied = false;
+            a.last_spec = None;
+        }
+        if a.modal.is_identity() {
+            return true;
+        }
+        let spec = match self.modal_spec(a) {
+            Ok(s) => s,
+            Err(e) => {
+                self.report(&e);
+                return false;
+            }
+        };
+        match a.scratch.execute_spec(spec.clone(), Origin::Gui) {
+            Ok(_) => {
+                a.applied = true;
+                a.last_spec = Some(spec);
+                true
+            }
+            Err(e) => {
+                self.report_core(&e);
+                false
+            }
+        }
+    }
+
+    /// Run `f` on the modal operator and refresh its preview.
+    fn with_modal(&mut self, f: impl FnOnce(&mut Modal)) {
+        let Some(mut a) = self.modal.take() else {
+            return;
+        };
+        if a.base_revision != self.doc.revision() {
+            self.status = Status::info("Cancelled: the scene was changed externally");
+            return;
+        }
+        f(&mut a.modal);
+        if self.refresh_modal(&mut a) {
+            self.modal = Some(a);
+        }
+    }
+
+    /// The pointer moved (viewport points); `snap` while Ctrl is held.
+    pub fn update_modal(&mut self, cursor: Vec2, snap: bool) {
+        self.with_modal(|m| {
+            m.snap = snap;
+            m.set_cursor(cursor);
+        });
+    }
+
+    /// X / Y / Z pressed (`plane` with Shift).
+    pub fn modal_axis(&mut self, axis: usize, plane: bool) {
+        self.with_modal(|m| m.press_axis(axis, plane));
+    }
+
+    /// A typed character (digit, `.`, `-`).
+    pub fn modal_type(&mut self, c: char) {
+        self.with_modal(|m| {
+            m.numeric.push(c);
+        });
+    }
+
+    pub fn modal_backspace(&mut self) {
+        self.with_modal(|m| m.numeric.backspace());
+    }
+
+    /// Enter / LMB: the real document gets exactly one command.
+    pub fn confirm_modal(&mut self) -> bool {
+        let Some(a) = self.modal.take() else {
+            return false;
+        };
+        let Some(spec) = a.last_spec.filter(|_| a.applied) else {
+            self.status = Status::info("Cancelled");
+            return false;
+        };
+        if a.base_revision != self.doc.revision() {
+            self.status = Status::info("Cancelled: the scene was changed externally");
+            return false;
+        }
+        self.run(spec)
+    }
+
+    /// Esc / RMB: the real document was never touched.
+    pub fn cancel_modal(&mut self) {
+        if self.modal.take().is_some() {
+            self.status = Status::info("Cancelled");
+        }
+    }
+
+    // ----- unsaved changes ---------------------------------------------------------
+
+    /// Run `what`, or ask first when there are unsaved changes.
+    pub fn guarded(&mut self, what: Guarded) {
+        if self.is_dirty() {
+            self.ui.confirm = Some(what);
+        } else {
+            self.run_guarded(what);
+        }
+    }
+
+    fn run_guarded(&mut self, what: Guarded) {
+        match what {
+            Guarded::New => self.new_document(),
+            Guarded::Open => self.open_dialog(FileDialogKind::Open),
+            Guarded::Exit => self.should_exit = true,
+        }
+    }
+
+    /// Answer the unsaved-changes question.
+    pub fn resolve_confirm(&mut self, choice: ConfirmChoice) {
+        let Some(what) = self.ui.confirm.take() else {
+            return;
+        };
+        match choice {
+            ConfirmChoice::Cancel => {}
+            ConfirmChoice::Discard => self.run_guarded(what),
+            ConfirmChoice::Save => {
+                self.save();
+                if !self.is_dirty() {
+                    self.run_guarded(what);
+                }
+            }
+        }
+    }
+
+    /// Open a file dialog: the native one where available, the typed-path
+    /// window otherwise.
+    pub fn open_dialog(&mut self, kind: FileDialogKind) {
+        let current = self.path.clone();
+        let suggested = match kind {
+            FileDialogKind::Open => current
+                .as_ref()
+                .map_or_else(String::new, |p| p.display().to_string()),
+            FileDialogKind::SaveAs => current
+                .as_ref()
+                .map_or_else(|| "scene.f3d".into(), |p| p.display().to_string()),
+            FileDialogKind::Import => String::new(),
+            FileDialogKind::Export => "export.glb".into(),
+        };
+        match crate::native::pick(kind, current.as_deref()) {
+            crate::native::Pick::Chosen(path) => {
+                self.ui.file_dialog = Some(FileDialog {
+                    kind,
+                    path: path.display().to_string(),
+                });
+                self.confirm_file_dialog();
+            }
+            crate::native::Pick::Cancelled => {}
+            crate::native::Pick::Unavailable => {
+                self.ui.file_dialog = Some(FileDialog {
+                    kind,
+                    path: suggested,
+                });
+            }
+        }
+    }
+
+    fn hide_selected(&mut self) {
+        let ids: Vec<Uuid> = self.doc.selection.objects().to_vec();
+        if ids.is_empty() {
+            self.status = Status::info("Nothing selected");
+            return;
+        }
+        self.run(CommandSpec::SetVisibility {
+            objects: Some(ids),
+            visible: false,
+        });
+    }
+
+    fn unhide_all(&mut self) {
+        let hidden: Vec<Uuid> = self
+            .doc
+            .scene
+            .nodes()
+            .filter(|n| !n.visible)
+            .map(|n| n.id())
+            .collect();
+        if hidden.is_empty() {
+            self.status = Status::info("Nothing is hidden");
+            return;
+        }
+        self.run(CommandSpec::SetVisibility {
+            objects: Some(hidden),
+            visible: true,
+        });
+    }
+
+    fn duplicate_and_grab(&mut self) {
+        if self.doc.selection.mode != SelectMode::Object {
+            self.report(&AppError::Usage(
+                "duplicate works on objects: press Tab to leave edit mode".into(),
+            ));
+            return;
+        }
+        if self.run(CommandSpec::DuplicateObjects {
+            objects: None,
+            offset: [0.0; 3],
+        }) {
+            self.begin_modal(ModalKind::Grab);
+        }
+    }
+
     // ----- actions ----------------------------------------------------------
 
     /// Perform a user action (menu, toolbar or shortcut).
@@ -666,7 +1031,28 @@ impl AppState {
                 }
                 Err(e) => self.report(&e),
             },
-            Action::Cancel => self.cancel_drag(),
+            Action::Cancel => {
+                self.cancel_modal();
+                self.cancel_drag();
+                self.ui.popup = None;
+            }
+            Action::Modal(k) => {
+                self.begin_modal(k);
+            }
+            Action::DuplicateGrab => self.duplicate_and_grab(),
+            Action::Popup(kind) => {
+                self.ui.popup = Some(Popup { kind, pos: None });
+                self.ui.palette_query.clear();
+            }
+            Action::Hide => self.hide_selected(),
+            Action::UnhideAll => self.unhide_all(),
+            Action::New => self.guarded(Guarded::New),
+            Action::Open => self.guarded(Guarded::Open),
+            Action::Save => self.save(),
+            Action::SaveAs => self.open_dialog(FileDialogKind::SaveAs),
+            Action::Import => self.open_dialog(FileDialogKind::Import),
+            Action::Export => self.open_dialog(FileDialogKind::Export),
+            Action::Quit => self.guarded(Guarded::Exit),
         }
     }
 
@@ -735,11 +1121,17 @@ impl AppState {
     /// The document to display and pick against: the scratch copy holding
     /// the live preview while a gizmo drag runs, the real document otherwise.
     pub fn display_doc(&self) -> &Document {
+        if let Some(m) = &self.modal {
+            return &m.scratch;
+        }
         self.drag.as_ref().map_or(&self.doc, |d| &d.scratch)
     }
 
     /// Cache key for the renderer matching [`AppState::display_doc`].
     pub fn display_revision(&self) -> u64 {
+        if let Some(m) = &self.modal {
+            return (1 << 61) | (m.serial << 24) | (m.scratch.revision() & 0xff_ffff);
+        }
         match &self.drag {
             Some(d) => (1 << 62) | (d.serial << 24) | (d.scratch.revision() & 0xff_ffff),
             None => self.doc.revision(),
@@ -865,6 +1257,7 @@ impl AppState {
 
     fn replace_document(&mut self, doc: Document, path: Option<PathBuf>) {
         self.drag = None;
+        self.modal = None;
         self.preview = None;
         self.picks.clear();
         self.ui.renaming = None;
@@ -965,12 +1358,7 @@ impl AppState {
     pub fn save(&mut self) {
         match self.path.clone() {
             Some(p) => self.save_project(&p),
-            None => {
-                self.ui.file_dialog = Some(FileDialog {
-                    kind: FileDialogKind::SaveAs,
-                    path: "scene.f3d".into(),
-                })
-            }
+            None => self.open_dialog(FileDialogKind::SaveAs),
         }
     }
 
@@ -1392,5 +1780,224 @@ mod tests {
         st.new_document();
         assert!(st.doc.scene.is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // ----- modal operators, guards, visibility -----------------------------
+
+    fn select_top_face(st: &mut AppState) {
+        st.set_mode(SelectMode::Face);
+        st.doc
+            .execute_json(
+                r#"{"op":"select_by_direction","direction":[0,0,1]}"#,
+                Origin::Gui,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn modal_grab_with_axis_and_typed_value_is_one_undo_entry() {
+        let (mut st, id) = cube_state();
+        let before = st.doc.state();
+        let revision = st.doc.revision();
+        let entries = applied(&st);
+        assert!(st.begin_modal(ModalKind::Grab));
+        assert!(st.is_modal());
+        st.modal_axis(0, false);
+        st.modal_type('2');
+        assert_eq!(
+            st.doc.revision(),
+            revision,
+            "the preview never touches the real document"
+        );
+        let preview = st
+            .display_doc()
+            .scene
+            .get(id)
+            .unwrap()
+            .transform
+            .translation;
+        assert!((preview.x - 2.0).abs() < 1e-5, "{preview:?}");
+        assert!(st.modal_hud().unwrap().contains("[X]"));
+        assert!(st.confirm_modal());
+        assert!(!st.is_modal());
+        assert_eq!(applied(&st), entries + 1);
+        let moved = st.doc.scene.get(id).unwrap().transform.translation;
+        assert!((moved.x - 2.0).abs() < 1e-5 && moved.y.abs() < 1e-5);
+        st.undo();
+        assert_eq!(st.doc.state(), before);
+    }
+
+    #[test]
+    fn modal_cancel_leaves_the_document_and_history_untouched() {
+        let (mut st, _) = cube_state();
+        let before = st.doc.state();
+        let revision = st.doc.revision();
+        let entries = applied(&st);
+        st.begin_modal(ModalKind::Rotate);
+        st.modal_type('4');
+        st.modal_type('5');
+        st.perform(Action::Cancel);
+        assert!(!st.is_modal());
+        assert_eq!(st.doc.revision(), revision);
+        assert_eq!(applied(&st), entries);
+        assert_eq!(st.doc.state(), before);
+        // Enter without any movement commits nothing either.
+        st.begin_modal(ModalKind::Scale);
+        assert!(!st.confirm_modal());
+        assert_eq!(applied(&st), entries);
+    }
+
+    #[test]
+    fn modal_without_a_target_reports_a_usage_error() {
+        let mut st = AppState::new(Document::new());
+        assert!(!st.begin_modal(ModalKind::Grab));
+        assert_eq!(st.status.kind, StatusKind::Error);
+        let (mut st, _) = cube_state();
+        assert!(
+            !st.begin_modal(ModalKind::Extrude),
+            "extrude needs edit mode"
+        );
+        assert_eq!(st.status.kind, StatusKind::Error);
+    }
+
+    #[test]
+    fn modal_extrude_in_face_mode_commits_one_command() {
+        let (mut st, id) = cube_state();
+        select_top_face(&mut st);
+        let faces = st
+            .doc
+            .scene
+            .get(id)
+            .unwrap()
+            .mesh
+            .as_ref()
+            .unwrap()
+            .face_count();
+        let entries = applied(&st);
+        assert!(st.begin_modal(ModalKind::Extrude));
+        st.modal_type('1');
+        assert!(st.is_modal(), "{}", st.status.text);
+        assert_eq!(
+            st.doc
+                .scene
+                .get(id)
+                .unwrap()
+                .mesh
+                .as_ref()
+                .unwrap()
+                .face_count(),
+            faces
+        );
+        assert!(st.confirm_modal(), "{}", st.status.text);
+        assert_eq!(applied(&st), entries + 1);
+        assert!(
+            st.doc
+                .scene
+                .get(id)
+                .unwrap()
+                .mesh
+                .as_ref()
+                .unwrap()
+                .face_count()
+                > faces
+        );
+    }
+
+    #[test]
+    fn external_change_cancels_a_running_modal() {
+        let (mut st, _) = cube_state();
+        st.begin_modal(ModalKind::Grab);
+        st.modal_type('1');
+        st.doc
+            .execute_json(
+                r#"{"op":"create_primitive","primitive":{"type":"cube"}}"#,
+                Origin::Ai,
+            )
+            .unwrap();
+        st.modal_type('2');
+        assert!(!st.is_modal());
+    }
+
+    #[test]
+    fn unsaved_changes_are_guarded() {
+        let dir = std::env::temp_dir().join(format!("forge3d-app-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut st, _) = cube_state();
+        assert!(st.is_dirty());
+        // Cancel keeps everything.
+        st.perform(Action::New);
+        assert_eq!(st.ui.confirm, Some(Guarded::New));
+        st.resolve_confirm(ConfirmChoice::Cancel);
+        assert_eq!(st.doc.scene.len(), 1);
+        st.perform(Action::Quit);
+        assert_eq!(st.ui.confirm, Some(Guarded::Exit));
+        st.resolve_confirm(ConfirmChoice::Cancel);
+        assert!(!st.should_exit);
+        // Save writes the project, then the action runs.
+        let f3d = dir.join("g.f3d");
+        st.path = Some(f3d.clone());
+        st.perform(Action::Quit);
+        st.resolve_confirm(ConfirmChoice::Save);
+        assert!(f3d.exists());
+        assert!(st.should_exit);
+        assert!(!st.is_dirty());
+        // Clean documents are not guarded.
+        st.should_exit = false;
+        st.perform(Action::New);
+        assert_eq!(st.ui.confirm, None);
+        assert!(st.doc.scene.is_empty());
+        // Discard drops the changes.
+        st.run(create_primitive(PrimitiveSpec::Cube { size: 1.0 }));
+        assert!(st.is_dirty());
+        st.perform(Action::Quit);
+        st.resolve_confirm(ConfirmChoice::Discard);
+        assert!(st.should_exit);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn dirty_follows_edits_and_modal_confirm() {
+        let dir = std::env::temp_dir().join(format!("forge3d-app-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut st, _) = cube_state();
+        st.save_project(&dir.join("d.f3d"));
+        assert!(!st.is_dirty());
+        st.begin_modal(ModalKind::Grab);
+        st.modal_type('1');
+        assert!(
+            !st.is_dirty(),
+            "a running preview does not dirty the document"
+        );
+        st.confirm_modal();
+        assert!(st.is_dirty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hide_show_and_duplicate_grab() {
+        let (mut st, id) = cube_state();
+        st.perform(Action::Hide);
+        assert!(!st.doc.scene.get(id).unwrap().visible);
+        st.perform(Action::UnhideAll);
+        assert!(st.doc.scene.get(id).unwrap().visible);
+        let before = st.doc.scene.len();
+        st.perform(Action::DuplicateGrab);
+        assert_eq!(st.doc.scene.len(), before + 1);
+        assert!(st.is_modal(), "the copy is grabbed right away");
+        st.cancel_modal();
+        assert_eq!(
+            st.doc.scene.len(),
+            before + 1,
+            "Esc keeps the copy where it was"
+        );
+    }
+
+    #[test]
+    fn popup_actions_open_and_escape_closes_them() {
+        let (mut st, _) = cube_state();
+        st.perform(Action::Popup(PopupKind::Palette));
+        assert_eq!(st.ui.popup.map(|p| p.kind), Some(PopupKind::Palette));
+        st.perform(Action::Cancel);
+        assert!(st.ui.popup.is_none());
     }
 }

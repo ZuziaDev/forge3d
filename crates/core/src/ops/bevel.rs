@@ -1,4 +1,4 @@
-//! Single-segment edge bevel (chamfer).
+//! Edge bevel: single-segment chamfer or multi-segment rounded profile.
 
 use std::collections::{HashMap, HashSet};
 
@@ -8,20 +8,38 @@ use crate::mesh::soup::Soup;
 use crate::mesh::{EdgeId, Mesh};
 use crate::selection::ElementSelection;
 
-/// Chamfer the given edges with a single segment of (approximately) `width`
+/// Maximum number of bevel segments.
+pub const MAX_BEVEL_SEGMENTS: u32 = 16;
+
+/// Bevel the given edges with `segments` strips of (approximately) `width`
 /// measured perpendicular to each beveled edge within its adjacent faces.
+/// One segment gives a flat chamfer; more segments follow a rounded
+/// (elliptic, tangent-continuous) profile around the original edge.
 ///
 /// Every endpoint of a beveled edge is replaced: each face corner at such a
 /// vertex gets new corner vertex(es) – a miter point when both corner edges
 /// are beveled, otherwise points slid along the un-beveled corner edges. A
 /// strip quad replaces every beveled edge and a polygon closes the hole at
 /// vertices where three or more boundary points meet. The result stays
-/// manifold. Selected edges must be interior manifold edges.
+/// manifold. Selected edges must be interior manifold edges. With several
+/// segments the profile points are shared by adjacent strips, end-cap faces
+/// and corner patches, so the result stays manifold as well.
 ///
 /// The new bevel faces (strips and corner patches) are selected afterwards.
-pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpResult> {
+pub fn bevel_edges(
+    mesh: &Mesh,
+    edges: &[EdgeId],
+    width: f32,
+    segments: u32,
+) -> CoreResult<OpResult> {
     require_nonempty(edges, "edges")?;
     check_edges(mesh, edges)?;
+    if !(1..=MAX_BEVEL_SEGMENTS).contains(&segments) {
+        return Err(CoreError::param(
+            "segments",
+            format!("must be in 1..={MAX_BEVEL_SEGMENTS}"),
+        ));
+    }
     if !(width.is_finite() && width > 0.0) {
         return Err(CoreError::param(
             "width",
@@ -203,6 +221,56 @@ pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpRe
         soup.faces.push(face);
     }
 
+    // ---- rounded profiles (shared per pair of end points) ----
+    // Key: (min, max) end-point pair; value: interior points from min to max.
+    let mut profiles: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
+    let original_faces = soup.faces.len();
+    if segments > 1 {
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        for e in mesh.edge_ids().filter(|e| sel[e.index()]) {
+            let loops = mesh.edge_loops(e);
+            let (l1, l2) = (loops[0], loops[1]);
+            pairs.push((
+                corner_last[l1.index()],
+                corner_first[mesh.loop_next(l2).index()],
+            ));
+            pairs.push((
+                corner_first[mesh.loop_next(l1).index()],
+                corner_last[l2.index()],
+            ));
+        }
+        for (a, b) in pairs {
+            let key = (a.min(b), a.max(b));
+            if profiles.contains_key(&key) || key.0 == key.1 {
+                continue;
+            }
+            let pa = soup.positions[key.0 as usize];
+            let pb = soup.positions[key.1 as usize];
+            let o_id = origin[&key.0];
+            let c = mesh.position(crate::mesh::VertexId(o_id));
+            let center = pa + pb - c;
+            let mut pts = Vec::with_capacity(segments as usize - 1);
+            for k in 1..segments {
+                let t = k as f32 / segments as f32 * std::f32::consts::FRAC_PI_2;
+                let p = center + (pa - center) * t.cos() + (pb - center) * t.sin();
+                let id = soup.add_vertex(p);
+                origin.insert(id, o_id);
+                pts.push(id);
+            }
+            profiles.insert(key, pts);
+        }
+        // End caps: original faces that contain a profile chord get the arc.
+        for f in soup.faces.iter_mut().take(original_faces) {
+            let mut out = Vec::with_capacity(f.len() + 2);
+            for i in 0..f.len() {
+                let (x, y) = (f[i], f[(i + 1) % f.len()]);
+                out.push(x);
+                out.extend(profile_between(&profiles, x, y));
+            }
+            *f = out;
+        }
+    }
+
     // ---- strips ----
     let mut bevel_faces: Vec<usize> = Vec::new();
     for e in mesh.edge_ids().filter(|e| sel[e.index()]) {
@@ -212,8 +280,17 @@ pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpRe
         let lb = corner_first[mesh.loop_next(l1).index()];
         let rb = corner_last[l2.index()];
         let ra = corner_first[mesh.loop_next(l2).index()];
-        bevel_faces.push(soup.faces.len());
-        soup.faces.push(vec![lb, la, ra, rb]);
+        let mut end_a = vec![la];
+        end_a.extend(profile_between(&profiles, la, ra));
+        end_a.push(ra);
+        let mut end_b = vec![lb];
+        end_b.extend(profile_between(&profiles, lb, rb));
+        end_b.push(rb);
+        for k in 0..end_a.len() - 1 {
+            bevel_faces.push(soup.faces.len());
+            soup.faces
+                .push(vec![end_b[k], end_a[k], end_a[k + 1], end_b[k + 1]]);
+        }
     }
 
     // ---- corner patches: close boundary cycles made only of new vertices
@@ -273,4 +350,13 @@ pub fn bevel_edges(mesh: &Mesh, edges: &[EdgeId], width: f32) -> CoreResult<OpRe
         .faces
         .extend(bevel_faces.into_iter().map(|f| f as u32));
     Ok(OpResult { mesh, selection })
+}
+
+/// Interior profile points walking from `a` to `b` (empty when none).
+fn profile_between(profiles: &HashMap<(u32, u32), Vec<u32>>, a: u32, b: u32) -> Vec<u32> {
+    match profiles.get(&(a.min(b), a.max(b))) {
+        Some(p) if a < b => p.clone(),
+        Some(p) => p.iter().rev().copied().collect(),
+        None => Vec::new(),
+    }
 }

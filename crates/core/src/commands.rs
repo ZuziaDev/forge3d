@@ -13,8 +13,9 @@ use crate::document::Document;
 use crate::error::{CoreError, CoreResult};
 use crate::math::{Aabb, Space};
 use crate::mesh::{EdgeId, ElementKind, FaceId, Mesh, VertexId};
+use crate::modifier::{Modifier, ModifierKind};
 use crate::ops::{self, BooleanOp, OpResult};
-use crate::scene::{Material, Node, RemovedSubtree};
+use crate::scene::{Material, Node, RemovedSubtree, Scene};
 use crate::selection::{self as sel, ElementSelection, SelectAction, SelectMode, Selection};
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,14 @@ fn names(doc: &Document, ids: &[Uuid]) -> String {
 
 fn not_applied() -> CoreError {
     CoreError::CommandState("undo called before apply".into())
+}
+
+fn kind_word(kind: ElementKind) -> &'static str {
+    match kind {
+        ElementKind::Vertex => "vertex",
+        ElementKind::Edge => "edge",
+        ElementKind::Face => "face",
+    }
 }
 
 fn plural(n: usize, word: &str) -> String {
@@ -879,6 +888,37 @@ pub enum MeshOp {
     Bevel {
         edges: Option<Vec<u32>>,
         width: f32,
+        segments: u32,
+    },
+    Solidify {
+        thickness: f32,
+    },
+    BridgeEdgeLoops {
+        edges: Option<Vec<u32>>,
+    },
+    FillHoles {
+        edges: Option<Vec<u32>>,
+        fan: bool,
+    },
+    Dissolve {
+        kind: Option<ElementKind>,
+        indices: Option<Vec<u32>>,
+    },
+    Triangulate {
+        faces: Option<Vec<u32>>,
+    },
+    TrisToQuads {
+        faces: Option<Vec<u32>>,
+        max_angle_deg: f32,
+    },
+    Poke {
+        faces: Option<Vec<u32>>,
+        offset: f32,
+    },
+    Smooth {
+        vertices: Option<Vec<u32>>,
+        factor: f32,
+        iterations: u32,
     },
     LoopCut {
         edge: u32,
@@ -923,6 +963,14 @@ impl MeshOp {
             MeshOp::Extrude { .. } => "Extrude",
             MeshOp::Inset { .. } => "Inset",
             MeshOp::Bevel { .. } => "Bevel",
+            MeshOp::Solidify { .. } => "Solidify",
+            MeshOp::BridgeEdgeLoops { .. } => "Bridge edge loops",
+            MeshOp::FillHoles { .. } => "Fill holes",
+            MeshOp::Dissolve { .. } => "Dissolve",
+            MeshOp::Triangulate { .. } => "Triangulate",
+            MeshOp::TrisToQuads { .. } => "Triangles to quads",
+            MeshOp::Poke { .. } => "Poke",
+            MeshOp::Smooth { .. } => "Smooth vertices",
             MeshOp::LoopCut { .. } => "Loop cut",
             MeshOp::Subdivide { .. } => "Subdivide",
             MeshOp::Merge { .. } => "Merge vertices",
@@ -953,6 +1001,73 @@ impl MeshOp {
             ));
         }
         Ok(faces)
+    }
+
+    /// Element kind (explicit, from the select mode or the non-empty part of
+    /// the selection) and indices (explicit or selected).
+    fn kind_and_indices(
+        mesh: &Mesh,
+        sel: &ElementSelection,
+        mode: SelectMode,
+        kind: Option<ElementKind>,
+        indices: &Option<Vec<u32>>,
+        verb: &str,
+    ) -> CoreResult<(ElementKind, Vec<u32>)> {
+        let inferred = if !sel.faces.is_empty() {
+            Some(ElementKind::Face)
+        } else if !sel.edges.is_empty() {
+            Some(ElementKind::Edge)
+        } else if !sel.vertices.is_empty() {
+            Some(ElementKind::Vertex)
+        } else {
+            None
+        };
+        let kind = kind.or(mode.element_kind()).or(inferred);
+        let kind = kind.ok_or_else(|| {
+            CoreError::EmptySelection(format!("nothing to {verb}; pass `kind` and `indices`"))
+        })?;
+        let idx: Vec<u32> = match indices {
+            Some(v) => {
+                sel::check_indices(mesh, kind, v)?;
+                v.clone()
+            }
+            None => match kind {
+                ElementKind::Vertex => sel
+                    .resolved_vertices(mesh)
+                    .into_iter()
+                    .map(|v| v.0)
+                    .collect(),
+                ElementKind::Edge => sel.resolved_edges(mesh).into_iter().map(|e| e.0).collect(),
+                ElementKind::Face => sel.resolved_faces(mesh).into_iter().map(|f| f.0).collect(),
+            },
+        };
+        Ok((kind, idx))
+    }
+
+    /// Explicit faces, else the selected faces, else all faces.
+    fn faces_or_all(
+        mesh: &Mesh,
+        explicit: &Option<Vec<u32>>,
+        sel: &ElementSelection,
+    ) -> CoreResult<Vec<FaceId>> {
+        if explicit.is_none() && sel.resolved_faces(mesh).is_empty() {
+            return Ok(mesh.face_ids().collect());
+        }
+        Self::faces_or_selection(mesh, explicit, sel)
+    }
+
+    fn edges_or_selection(
+        mesh: &Mesh,
+        explicit: &Option<Vec<u32>>,
+        sel: &ElementSelection,
+    ) -> CoreResult<Vec<EdgeId>> {
+        Ok(match explicit {
+            Some(v) => {
+                sel::check_indices(mesh, ElementKind::Edge, v)?;
+                v.iter().map(|&i| EdgeId(i)).collect()
+            }
+            None => sel.resolved_edges(mesh),
+        })
     }
 
     /// Run the operation. Returns the result and a short detail string.
@@ -986,21 +1101,94 @@ impl MeshOp {
                     d,
                 ))
             }
-            MeshOp::Bevel { edges, width } => {
-                let e: Vec<EdgeId> = match edges {
-                    Some(v) => {
-                        sel::check_indices(mesh, ElementKind::Edge, v)?;
-                        v.iter().map(|&i| EdgeId(i)).collect()
-                    }
-                    None => sel.resolved_edges(mesh),
-                };
+            MeshOp::Bevel {
+                edges,
+                width,
+                segments,
+            } => {
+                let e = Self::edges_or_selection(mesh, edges, sel)?;
                 if e.is_empty() {
                     return Err(CoreError::EmptySelection(
                         "no edges selected; pass `edges` or select edges first".into(),
                     ));
                 }
-                let d = plural(e.len(), "edge");
-                Ok((ops::bevel_edges(mesh, &e, *width)?, d))
+                let d = format!(
+                    "{} ({})",
+                    plural(e.len(), "edge"),
+                    plural(*segments as usize, "segment")
+                );
+                Ok((ops::bevel_edges(mesh, &e, *width, *segments)?, d))
+            }
+            MeshOp::Solidify { thickness } => Ok((
+                OpResult {
+                    mesh: ops::solidify(mesh, *thickness)?,
+                    selection: empty(),
+                },
+                format!("({thickness})"),
+            )),
+            MeshOp::BridgeEdgeLoops { edges } => {
+                let e = Self::edges_or_selection(mesh, edges, sel)?;
+                let r = ops::bridge_edge_loops(mesh, &e)?;
+                let d = plural(r.selection.faces.len(), "face");
+                Ok((r, d))
+            }
+            MeshOp::FillHoles { edges, fan } => {
+                let e = Self::edges_or_selection(mesh, edges, sel)?;
+                let r = ops::fill_holes(mesh, (!e.is_empty()).then_some(&e[..]), *fan)?;
+                let d = plural(r.selection.faces.len(), "face");
+                Ok((r, d))
+            }
+            MeshOp::Dissolve { kind, indices } => {
+                let (kind, idx) =
+                    Self::kind_and_indices(mesh, sel, mode, *kind, indices, "dissolve")?;
+                let d = plural(idx.len(), kind_word(kind));
+                Ok((ops::dissolve(mesh, kind, &idx)?, d))
+            }
+            MeshOp::Triangulate { faces } => {
+                let f = Self::faces_or_all(mesh, faces, sel)?;
+                let d = plural(f.len(), "face");
+                Ok((ops::triangulate_faces(mesh, &f)?, d))
+            }
+            MeshOp::TrisToQuads {
+                faces,
+                max_angle_deg,
+            } => {
+                let f = Self::faces_or_all(mesh, faces, sel)?;
+                let d = plural(f.len(), "face");
+                Ok((ops::tris_to_quads(mesh, &f, *max_angle_deg)?, d))
+            }
+            MeshOp::Poke { faces, offset } => {
+                let f = Self::faces_or_selection(mesh, faces, sel)?;
+                let d = plural(f.len(), "face");
+                Ok((ops::poke_faces(mesh, &f, *offset)?, d))
+            }
+            MeshOp::Smooth {
+                vertices,
+                factor,
+                iterations,
+            } => {
+                let v: Vec<VertexId> = match vertices {
+                    Some(v) => {
+                        sel::check_indices(mesh, ElementKind::Vertex, v)?;
+                        v.iter().map(|&i| VertexId(i)).collect()
+                    }
+                    None => {
+                        let t = sel.touched_vertices(mesh);
+                        if t.is_empty() {
+                            mesh.vertex_ids().collect()
+                        } else {
+                            t
+                        }
+                    }
+                };
+                let d = format!("{} x{iterations}", plural(v.len(), "vertex"));
+                Ok((
+                    OpResult {
+                        mesh: ops::smooth_vertices(mesh, &v, *factor, *iterations)?,
+                        selection: sel.clone(),
+                    },
+                    d,
+                ))
             }
             MeshOp::LoopCut { edge, cuts, factor } => {
                 let r = ops::loop_cut(mesh, EdgeId(*edge), *cuts, *factor)?;
@@ -1043,44 +1231,9 @@ impl MeshOp {
                 }
             }
             MeshOp::Delete { kind, indices } => {
-                let inferred = if !sel.faces.is_empty() {
-                    Some(ElementKind::Face)
-                } else if !sel.edges.is_empty() {
-                    Some(ElementKind::Edge)
-                } else if !sel.vertices.is_empty() {
-                    Some(ElementKind::Vertex)
-                } else {
-                    None
-                };
-                let kind = kind.or(mode.element_kind()).or(inferred);
-                let kind = kind.ok_or_else(|| {
-                    CoreError::EmptySelection("nothing to delete; pass `kind` and `indices`".into())
-                })?;
-                let idx: Vec<u32> = match indices {
-                    Some(v) => {
-                        sel::check_indices(mesh, kind, v)?;
-                        v.clone()
-                    }
-                    None => match kind {
-                        ElementKind::Vertex => sel
-                            .resolved_vertices(mesh)
-                            .into_iter()
-                            .map(|v| v.0)
-                            .collect(),
-                        ElementKind::Edge => {
-                            sel.resolved_edges(mesh).into_iter().map(|e| e.0).collect()
-                        }
-                        ElementKind::Face => {
-                            sel.resolved_faces(mesh).into_iter().map(|f| f.0).collect()
-                        }
-                    },
-                };
-                let word = match kind {
-                    ElementKind::Vertex => "vertex",
-                    ElementKind::Edge => "edge",
-                    ElementKind::Face => "face",
-                };
-                let d = plural(idx.len(), word);
+                let (kind, idx) =
+                    Self::kind_and_indices(mesh, sel, mode, *kind, indices, "delete")?;
+                let d = plural(idx.len(), kind_word(kind));
                 let m = ops::delete_elements(mesh, kind, &idx)?;
                 Ok((
                     OpResult {
@@ -1194,11 +1347,31 @@ impl MeshOp {
     }
 }
 
+/// Undo data of a mesh edit: full snapshots, or only the moved vertex
+/// positions for edits that keep the topology (element transforms, smoothing).
+enum MeshSnapshot {
+    Full {
+        before: Mesh,
+        after: Mesh,
+    },
+    Positions {
+        verts: Vec<VertexId>,
+        before: Vec<Vec3>,
+        after: Vec<Vec3>,
+    },
+}
+
 struct MeshEditState {
     id: Uuid,
-    before: Mesh,
-    after: Mesh,
+    snapshot: MeshSnapshot,
     selection_after: ElementSelection,
+}
+
+fn set_positions(mesh: &mut Mesh, verts: &[VertexId], pos: &[Vec3]) {
+    for (&v, &p) in verts.iter().zip(pos) {
+        mesh.set_position(v, p);
+    }
+    mesh.recalc_normals();
 }
 
 /// Apply a [`MeshOp`] to one object's mesh. Undo restores a snapshot.
@@ -1222,30 +1395,59 @@ impl MeshEdit {
 
 impl Command for MeshEdit {
     fn apply(&mut self, doc: &mut Document) -> CoreResult<ChangeSummary> {
-        if self.state.is_none() {
-            let id = resolve_object(doc, self.target)?;
-            let mesh = doc.scene.mesh(id)?;
-            let empty = ElementSelection::default();
-            let cur = doc.selection.elements(id).unwrap_or(&empty);
-            let (res, detail) = self.op.run(mesh, cur, doc.selection.mode)?;
-            self.desc = format!("{} {} on '{}'", self.op.name(), detail, name_of(doc, id));
-            self.state = Some(MeshEditState {
-                id,
-                before: mesh.clone(),
-                after: res.mesh,
-                selection_after: res.selection,
-            });
+        if let Some(st) = self.state.as_ref() {
+            let mesh = doc.scene.mesh_mut(st.id)?;
+            match &st.snapshot {
+                MeshSnapshot::Full { after, .. } => *mesh = after.clone(),
+                MeshSnapshot::Positions { verts, after, .. } => set_positions(mesh, verts, after),
+            }
+            doc.selection
+                .set_elements(st.id, st.selection_after.clone());
+            return ChangeSummary::new().modified(&doc.scene, st.id);
         }
-        let st = self.state.as_ref().expect("resolved");
-        *doc.scene.mesh_mut(st.id)? = st.after.clone();
-        doc.selection
-            .set_elements(st.id, st.selection_after.clone());
-        ChangeSummary::new().modified(&doc.scene, st.id)
+        let id = resolve_object(doc, self.target)?;
+        let mesh = doc.scene.mesh(id)?;
+        let empty = ElementSelection::default();
+        let cur = doc.selection.elements(id).unwrap_or(&empty);
+        let (res, detail) = self.op.run(mesh, cur, doc.selection.mode)?;
+        self.desc = format!("{} {} on '{}'", self.op.name(), detail, name_of(doc, id));
+        let positions_only = matches!(
+            self.op,
+            MeshOp::TransformElements { .. } | MeshOp::Smooth { .. }
+        ) && res.mesh.vertex_count() == mesh.vertex_count();
+        let snapshot = if positions_only {
+            let verts: Vec<VertexId> = mesh
+                .vertex_ids()
+                .filter(|&v| mesh.position(v) != res.mesh.position(v))
+                .collect();
+            MeshSnapshot::Positions {
+                before: verts.iter().map(|&v| mesh.position(v)).collect(),
+                after: verts.iter().map(|&v| res.mesh.position(v)).collect(),
+                verts,
+            }
+        } else {
+            MeshSnapshot::Full {
+                before: mesh.clone(),
+                after: res.mesh.clone(),
+            }
+        };
+        *doc.scene.mesh_mut(id)? = res.mesh;
+        doc.selection.set_elements(id, res.selection.clone());
+        self.state = Some(MeshEditState {
+            id,
+            snapshot,
+            selection_after: res.selection,
+        });
+        ChangeSummary::new().modified(&doc.scene, id)
     }
 
     fn undo(&mut self, doc: &mut Document) -> CoreResult<()> {
         let st = self.state.as_ref().ok_or_else(not_applied)?;
-        *doc.scene.mesh_mut(st.id)? = st.before.clone();
+        let mesh = doc.scene.mesh_mut(st.id)?;
+        match &st.snapshot {
+            MeshSnapshot::Full { before, .. } => *mesh = before.clone(),
+            MeshSnapshot::Positions { verts, before, .. } => set_positions(mesh, verts, before),
+        }
         Ok(())
     }
 
@@ -1345,6 +1547,530 @@ impl Command for BooleanObjects {
         if let Some(sub) = self.removed.take() {
             doc.scene.restore_subtree(sub)?;
         }
+        Ok(())
+    }
+
+    fn describe(&self) -> String {
+        self.desc.clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Modifiers and shading
+// ---------------------------------------------------------------------------
+
+/// A change to a node's modifier stack.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModifierOp {
+    /// Insert at `index` (default: end of the stack).
+    Add {
+        modifier: Modifier,
+        index: Option<usize>,
+    },
+    Remove {
+        index: usize,
+    },
+    /// Replace the type/parameters and/or the enabled flag.
+    Set {
+        index: usize,
+        kind: Option<ModifierKind>,
+        enabled: Option<bool>,
+    },
+    /// Move the modifier at `from` so it ends up at `to`.
+    Move {
+        from: usize,
+        to: usize,
+    },
+    /// Bake one modifier (applied to the base mesh) or, with `None`, the
+    /// whole enabled stack into the base mesh and remove it.
+    Apply {
+        index: Option<usize>,
+    },
+}
+
+struct ModifierState {
+    id: Uuid,
+    before: Vec<Modifier>,
+    after: Vec<Modifier>,
+    mesh: Option<(Mesh, Mesh)>,
+}
+
+/// Edit one object's modifier stack (undo restores the stack and, for
+/// apply, the base mesh).
+pub struct ModifierEdit {
+    target: Option<Uuid>,
+    op: ModifierOp,
+    state: Option<ModifierState>,
+    desc: String,
+}
+
+fn check_modifier_index(len: usize, index: usize, name: &str) -> CoreResult<()> {
+    if index < len {
+        Ok(())
+    } else if len == 0 {
+        Err(CoreError::param(name, "the object has no modifiers"))
+    } else {
+        Err(CoreError::param(
+            name,
+            format!("modifier index {index} out of range (stack has {len})"),
+        ))
+    }
+}
+
+impl ModifierEdit {
+    pub fn new(target: Option<Uuid>, op: ModifierOp) -> CoreResult<ModifierEdit> {
+        match &op {
+            ModifierOp::Add { modifier, .. } => modifier.kind.validate()?,
+            ModifierOp::Set { kind: Some(k), .. } => k.validate()?,
+            ModifierOp::Set {
+                kind: None,
+                enabled: None,
+                ..
+            } => {
+                return Err(CoreError::param(
+                    "modifier",
+                    "pass `modifier` and/or `enabled` to change",
+                ))
+            }
+            _ => {}
+        }
+        Ok(ModifierEdit {
+            target,
+            op,
+            state: None,
+            desc: "Modifier".into(),
+        })
+    }
+
+    fn compute(&self, doc: &Document) -> CoreResult<ModifierState> {
+        let id = resolve_object(doc, self.target)?;
+        let node = doc.scene.node(id)?;
+        let base = node.mesh.as_ref().ok_or(CoreError::NoMesh(id))?;
+        let before = node.modifiers.clone();
+        let mut after = before.clone();
+        let mut mesh = None;
+        match &self.op {
+            ModifierOp::Add { modifier, index } => {
+                let i = index.unwrap_or(after.len());
+                if i > after.len() {
+                    return Err(CoreError::param(
+                        "index",
+                        format!("must be <= {} (stack length)", after.len()),
+                    ));
+                }
+                after.insert(i, modifier.clone());
+            }
+            ModifierOp::Remove { index } => {
+                check_modifier_index(after.len(), *index, "index")?;
+                after.remove(*index);
+            }
+            ModifierOp::Set {
+                index,
+                kind,
+                enabled,
+            } => {
+                check_modifier_index(after.len(), *index, "index")?;
+                if let Some(k) = kind {
+                    after[*index].kind = k.clone();
+                }
+                if let Some(e) = enabled {
+                    after[*index].enabled = *e;
+                }
+            }
+            ModifierOp::Move { from, to } => {
+                check_modifier_index(after.len(), *from, "from")?;
+                check_modifier_index(after.len(), *to, "to")?;
+                let m = after.remove(*from);
+                after.insert(*to, m);
+            }
+            ModifierOp::Apply { index: Some(i) } => {
+                check_modifier_index(after.len(), *i, "index")?;
+                let baked = after[*i].kind.apply(base)?;
+                after.remove(*i);
+                mesh = Some((base.clone(), baked));
+            }
+            ModifierOp::Apply { index: None } => {
+                if after.is_empty() {
+                    return Err(CoreError::InvalidSelection(
+                        "the object has no modifiers to apply".into(),
+                    ));
+                }
+                let mut cur = base.clone();
+                for m in after.iter().filter(|m| m.enabled) {
+                    cur = m.kind.apply(&cur)?;
+                }
+                after.clear();
+                mesh = Some((base.clone(), cur));
+            }
+        }
+        Ok(ModifierState {
+            id,
+            before,
+            after,
+            mesh,
+        })
+    }
+
+    fn describe_op(&self, doc: &Document, st: &ModifierState) -> String {
+        let name = name_of(doc, st.id);
+        let ty = |list: &[Modifier], i: usize| {
+            list.get(i)
+                .map_or("modifier", |m| m.kind.type_name())
+                .to_string()
+        };
+        match &self.op {
+            ModifierOp::Add { modifier, .. } => {
+                format!("Add {} modifier to '{name}'", modifier.kind.type_name())
+            }
+            ModifierOp::Remove { index } => {
+                format!("Remove {} modifier from '{name}'", ty(&st.before, *index))
+            }
+            ModifierOp::Set { index, .. } => {
+                format!("Set {} modifier on '{name}'", ty(&st.after, *index))
+            }
+            ModifierOp::Move { from, to } => format!("Move modifier {from} to {to} on '{name}'"),
+            ModifierOp::Apply { index: Some(i) } => {
+                format!("Apply {} modifier on '{name}'", ty(&st.before, *i))
+            }
+            ModifierOp::Apply { index: None } => format!("Apply all modifiers on '{name}'"),
+        }
+    }
+}
+
+impl Command for ModifierEdit {
+    fn apply(&mut self, doc: &mut Document) -> CoreResult<ChangeSummary> {
+        if self.state.is_none() {
+            let st = self.compute(doc)?;
+            self.desc = self.describe_op(doc, &st);
+            self.state = Some(st);
+        }
+        let st = self.state.as_ref().expect("resolved");
+        let node = doc.scene.node_mut(st.id)?;
+        node.modifiers = st.after.clone();
+        if let Some((_, after)) = &st.mesh {
+            node.mesh = Some(after.clone());
+            doc.selection.clear_elements(st.id);
+        }
+        ChangeSummary::new().modified(&doc.scene, st.id)
+    }
+
+    fn undo(&mut self, doc: &mut Document) -> CoreResult<()> {
+        let st = self.state.as_ref().ok_or_else(not_applied)?;
+        let node = doc.scene.node_mut(st.id)?;
+        node.modifiers = st.before.clone();
+        if let Some((before, _)) = &st.mesh {
+            node.mesh = Some(before.clone());
+        }
+        Ok(())
+    }
+
+    fn describe(&self) -> String {
+        self.desc.clone()
+    }
+}
+
+/// Set flat/smooth shading (and the auto-smooth angle) on objects.
+pub struct SetShading {
+    targets: Option<Vec<Uuid>>,
+    smooth: bool,
+    angle: Option<f32>,
+    state: Option<Vec<(Uuid, bool, Option<f32>)>>,
+    desc: String,
+}
+
+impl SetShading {
+    pub fn new(
+        targets: Option<Vec<Uuid>>,
+        smooth: bool,
+        auto_smooth_angle_deg: Option<f32>,
+    ) -> CoreResult<SetShading> {
+        if let Some(a) = auto_smooth_angle_deg {
+            if !(a.is_finite() && (0.0..=180.0).contains(&a)) {
+                return Err(CoreError::param(
+                    "auto_smooth_angle_deg",
+                    "must be in 0..=180",
+                ));
+            }
+        }
+        Ok(SetShading {
+            targets,
+            smooth,
+            angle: auto_smooth_angle_deg,
+            state: None,
+            desc: "Set shading".into(),
+        })
+    }
+}
+
+impl Command for SetShading {
+    fn apply(&mut self, doc: &mut Document) -> CoreResult<ChangeSummary> {
+        if self.state.is_none() {
+            let ids = resolve_objects(doc, self.targets.as_deref())?;
+            let mut st = Vec::with_capacity(ids.len());
+            for id in &ids {
+                let n = doc.scene.node(*id)?;
+                st.push((*id, n.shade_smooth, n.auto_smooth_angle_deg));
+            }
+            self.desc = format!(
+                "Shade {} {}",
+                if self.smooth { "smooth" } else { "flat" },
+                names(doc, &ids)
+            );
+            self.state = Some(st);
+        }
+        let mut s = ChangeSummary::new();
+        for &(id, _, _) in self.state.as_ref().expect("resolved") {
+            let n = doc.scene.node_mut(id)?;
+            n.shade_smooth = self.smooth;
+            n.auto_smooth_angle_deg = self.angle;
+            s = s.modified(&doc.scene, id)?;
+        }
+        Ok(s)
+    }
+
+    fn undo(&mut self, doc: &mut Document) -> CoreResult<()> {
+        for &(id, smooth, angle) in self.state.as_ref().ok_or_else(not_applied)? {
+            let n = doc.scene.node_mut(id)?;
+            n.shade_smooth = smooth;
+            n.auto_smooth_angle_deg = angle;
+        }
+        Ok(())
+    }
+
+    fn describe(&self) -> String {
+        self.desc.clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Separate / join (whole-scene snapshots: rare, structural operations)
+// ---------------------------------------------------------------------------
+
+struct SceneSwap {
+    before: Scene,
+    after: Scene,
+    summary: ChangeSummary,
+}
+
+/// Move faces of an object into a new object (same transform, material,
+/// shading and modifiers, placed right after the source).
+pub struct SeparateFaces {
+    target: Option<Uuid>,
+    faces: Option<Vec<u32>>,
+    name: Option<String>,
+    state: Option<SceneSwap>,
+    desc: String,
+}
+
+impl SeparateFaces {
+    pub fn new(
+        target: Option<Uuid>,
+        faces: Option<Vec<u32>>,
+        name: Option<String>,
+    ) -> SeparateFaces {
+        SeparateFaces {
+            target,
+            faces,
+            name,
+            state: None,
+            desc: "Separate".into(),
+        }
+    }
+
+    fn compute(&mut self, doc: &mut Document) -> CoreResult<SceneSwap> {
+        let id = resolve_object(doc, self.target)?;
+        let mesh = doc.scene.mesh(id)?;
+        let empty = ElementSelection::default();
+        let cur = doc.selection.elements(id).unwrap_or(&empty);
+        let faces = MeshOp::faces_or_selection(mesh, &self.faces, cur)?;
+        if faces.len() == mesh.face_count() {
+            return Err(CoreError::InvalidSelection(
+                "cannot separate every face; leave at least one face (or duplicate the object)"
+                    .into(),
+            ));
+        }
+        let (rest, taken) = ops::split_faces(mesh, &faces)?;
+        let before = doc.scene.clone();
+        let src = doc.scene.node(id)?.clone();
+        let base = self.name.clone().unwrap_or_else(|| src.name.clone());
+        let mut node = Node::new(doc.scene.unique_name(&base))
+            .with_mesh(taken)
+            .with_transform(src.transform);
+        node.material = src.material.clone();
+        node.visible = src.visible;
+        node.modifiers = src.modifiers.clone();
+        node.shade_smooth = src.shade_smooth;
+        node.auto_smooth_angle_deg = src.auto_smooth_angle_deg;
+        let index = doc.scene.sibling_index(id)? + 1;
+        let new_id = doc.scene.insert_node(node, src.parent, Some(index))?;
+        *doc.scene.mesh_mut(id)? = rest;
+        self.desc = format!(
+            "Separate {} from '{}' into '{}'",
+            plural(faces.len(), "face"),
+            src.name,
+            name_of(doc, new_id)
+        );
+        let summary = ChangeSummary::new()
+            .created(&doc.scene, new_id)?
+            .modified(&doc.scene, id)?;
+        doc.selection.clear_elements(id);
+        Ok(SceneSwap {
+            before,
+            after: doc.scene.clone(),
+            summary,
+        })
+    }
+}
+
+impl Command for SeparateFaces {
+    fn apply(&mut self, doc: &mut Document) -> CoreResult<ChangeSummary> {
+        match &self.state {
+            Some(st) => doc.scene = st.after.clone(),
+            None => {
+                let before = doc.scene.clone();
+                match self.compute(doc) {
+                    Ok(st) => self.state = Some(st),
+                    Err(e) => {
+                        doc.scene = before;
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        Ok(self.state.as_ref().expect("resolved").summary.clone())
+    }
+
+    fn undo(&mut self, doc: &mut Document) -> CoreResult<()> {
+        doc.scene = self.state.as_ref().ok_or_else(not_applied)?.before.clone();
+        Ok(())
+    }
+
+    fn describe(&self) -> String {
+        self.desc.clone()
+    }
+}
+
+/// Merge the meshes of several objects into one target (its local space).
+/// Children of joined objects are re-parented to the target keeping their
+/// world transform; the joined objects are deleted. Their modifiers are not
+/// carried over (apply them first to keep their effect).
+pub struct JoinObjects {
+    targets: Option<Vec<Uuid>>,
+    into: Option<Uuid>,
+    state: Option<SceneSwap>,
+    desc: String,
+}
+
+impl JoinObjects {
+    pub fn new(targets: Option<Vec<Uuid>>, into: Option<Uuid>) -> JoinObjects {
+        JoinObjects {
+            targets,
+            into,
+            state: None,
+            desc: "Join".into(),
+        }
+    }
+
+    fn compute(&mut self, doc: &mut Document) -> CoreResult<SceneSwap> {
+        let mut ids = resolve_objects(doc, self.targets.as_deref())?;
+        let into = match self.into {
+            Some(t) => {
+                doc.scene.node(t)?;
+                t
+            }
+            None => doc
+                .selection
+                .active()
+                .filter(|a| ids.contains(a))
+                .unwrap_or(ids[0]),
+        };
+        if !ids.contains(&into) {
+            ids.insert(0, into);
+        }
+        ids.dedup();
+        let others: Vec<Uuid> = ids.iter().copied().filter(|&i| i != into).collect();
+        if others.is_empty() {
+            return Err(CoreError::InvalidSelection(
+                "join needs at least two objects".into(),
+            ));
+        }
+        doc.scene.mesh(into)?;
+        for &o in &others {
+            doc.scene.mesh(o)?;
+            if doc.scene.is_ancestor(o, into) {
+                return Err(CoreError::InvalidSelection(format!(
+                    "'{}' is an ancestor of the join target; reparent first",
+                    name_of(doc, o)
+                )));
+            }
+        }
+        let before = doc.scene.clone();
+        let inv = doc.scene.world_transform(into)?.inverse();
+        let mut merged = doc.scene.mesh(into)?.clone();
+        let mut gone = Vec::new();
+        for &o in &others {
+            let mut m = doc.scene.mesh(o)?.clone();
+            m.transform(&(inv * doc.scene.world_transform(o)?));
+            merged.append(&m);
+            gone.push(ObjectSummary::of(&doc.scene, o)?);
+        }
+        for &o in &others {
+            let children: Vec<Uuid> = doc.scene.node(o)?.children().to_vec();
+            for c in children {
+                let target = if others.contains(&c) {
+                    None
+                } else {
+                    Some(into)
+                };
+                doc.scene.set_parent(c, target, true, None)?;
+            }
+        }
+        for &o in &others {
+            doc.scene.remove_subtree(o)?;
+        }
+        *doc.scene.mesh_mut(into)? = merged;
+        self.desc = format!(
+            "Join {} into '{}'",
+            gone.iter()
+                .map(|g| format!("'{}'", g.name))
+                .collect::<Vec<_>>()
+                .join(", "),
+            name_of(doc, into)
+        );
+        let mut summary = ChangeSummary::new().modified(&doc.scene, into)?;
+        for g in gone {
+            summary = summary.deleted(g);
+        }
+        doc.selection.clear_elements(into);
+        doc.selection.set_objects([into]);
+        Ok(SceneSwap {
+            before,
+            after: doc.scene.clone(),
+            summary,
+        })
+    }
+}
+
+impl Command for JoinObjects {
+    fn apply(&mut self, doc: &mut Document) -> CoreResult<ChangeSummary> {
+        match &self.state {
+            Some(st) => doc.scene = st.after.clone(),
+            None => {
+                let before = doc.scene.clone();
+                match self.compute(doc) {
+                    Ok(st) => self.state = Some(st),
+                    Err(e) => {
+                        doc.scene = before;
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        Ok(self.state.as_ref().expect("resolved").summary.clone())
+    }
+
+    fn undo(&mut self, doc: &mut Document) -> CoreResult<()> {
+        doc.scene = self.state.as_ref().ok_or_else(not_applied)?.before.clone();
         Ok(())
     }
 

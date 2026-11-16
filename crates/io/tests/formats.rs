@@ -1172,3 +1172,56 @@ fn gltf_malformed_inputs_are_parse_errors() {
     let e = import_bytes(json.as_bytes(), ImportFormat::Gltf, "t", &io).unwrap_err();
     assert_eq!(e.code(), "invalid_data");
 }
+
+fn glb_vertex_count(doc: &Document) -> usize {
+    let b = export_bytes(&doc.scene, ExportFormat::Glb, &opts()).unwrap();
+    let g = gltf::Gltf::from_slice(&b.primary().bytes).unwrap();
+    let prim = g
+        .document
+        .meshes()
+        .next()
+        .unwrap()
+        .primitives()
+        .next()
+        .unwrap();
+    prim.get(&gltf::Semantic::Positions).unwrap().count()
+}
+
+#[test]
+fn export_uses_evaluated_mesh_and_object_shading() {
+    let mut doc = Document::new();
+    doc.execute_json(
+        r#"{"op":"create_primitive","primitive":{"type":"cube"}}"#,
+        Origin::Gui,
+    )
+    .unwrap();
+    assert_eq!(glb_vertex_count(&doc), 24);
+    // Fully smooth: one normal per cube corner.
+    doc.execute_json(r#"{"op":"set_shading","smooth":true}"#, Origin::Gui)
+        .unwrap();
+    assert_eq!(glb_vertex_count(&doc), 8);
+    // Auto smooth below 90 degrees keeps the cube edges hard again.
+    doc.execute_json(
+        r#"{"op":"set_shading","smooth":true,"auto_smooth_angle_deg":30}"#,
+        Origin::Gui,
+    )
+    .unwrap();
+    assert_eq!(glb_vertex_count(&doc), 24);
+    // Modifiers are applied on export (array of 2 separate cubes).
+    doc.execute_json(
+        r#"{"op":"add_modifier","modifier":{"type":"array","count":2,"offset":[3,0,0]}}"#,
+        Origin::Gui,
+    )
+    .unwrap();
+    assert_eq!(glb_vertex_count(&doc), 48);
+    let b = export_bytes(&doc.scene, ExportFormat::Stl, &opts()).unwrap();
+    let imp = import_bytes(
+        &b.primary().bytes,
+        ImportFormat::Stl,
+        "c",
+        &ImportOptions::default(),
+    )
+    .unwrap();
+    let mesh = imp.scene.nodes().next().unwrap().mesh.as_ref().unwrap();
+    assert_eq!(mesh.face_count(), 24);
+}

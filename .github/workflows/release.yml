@@ -3,25 +3,48 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag
+        description: Release tag (vX.Y.Z)
         required: true
-        default: v0.1.0
+        default: v0.1.1
   push:
     tags: ["v*"]
 permissions:
   contents: write
 jobs:
-  windows-installer:
+  windows-release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Check that the tag matches the crate version
+        run: |
+          version="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')"
+          [ "v$version" = "$TAG" ] || { echo "tag $TAG does not match Cargo.toml version $version" >&2; exit 1; }
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis
       - run: rustup toolchain install stable --profile minimal && rustup default stable && rustup target add x86_64-pc-windows-gnu
-      - run: ./packaging/windows/build.sh dist
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build exe and installer
+        run: ./packaging/windows/build.sh dist
+      - name: Name assets and write checksums
         run: |
-          gh release create "$TAG" dist/*-setup.exe dist/forge3d.exe \
-            --target "$GITHUB_SHA" --title "forge3d $TAG" \
-            --notes "Windows installer and standalone forge3d.exe. Cross-compiled; not yet tested on Windows."
+          version="${TAG#v}"
+          mv dist/forge3d.exe "dist/forge3d-$version-windows-x64.exe"
+          (cd dist && sha256sum "forge3d-$version-setup.exe" "forge3d-$version-windows-x64.exe" > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+      - name: Release notes from CHANGELOG.md
+        run: ./packaging/release-notes.sh "$TAG" dist > dist/RELEASE_NOTES.md
+      - name: Publish the release
+        run: |
+          version="${TAG#v}"
+          files=("dist/forge3d-$version-setup.exe" "dist/forge3d-$version-windows-x64.exe" dist/SHA256SUMS.txt)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+            gh release edit "$TAG" --title "forge3d $version" --notes-file dist/RELEASE_NOTES.md
+          else
+            gh release create "$TAG" "${files[@]}" --target "$GITHUB_SHA" \
+              --title "forge3d $version" --notes-file dist/RELEASE_NOTES.md
+          fi

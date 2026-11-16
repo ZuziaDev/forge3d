@@ -481,3 +481,60 @@ fn large_scene_renders_in_reasonable_time() {
     let limit = if cfg!(debug_assertions) { 60.0 } else { 2.0 };
     assert!(dt.as_secs_f32() < limit, "took {dt:?}");
 }
+
+#[test]
+fn extraction_shows_evaluated_mesh_except_in_edit_mode() {
+    let mut doc = Document::new();
+    let id = doc
+        .execute_json(
+            r#"{"op":"create_primitive","primitive":{"type":"cube"}}"#,
+            Origin::Gui,
+        )
+        .unwrap()
+        .created[0]
+        .id;
+    doc.execute_json(
+        r#"{"op":"add_modifier","modifier":{"type":"subdivision","levels":1}}"#,
+        Origin::Gui,
+    )
+    .unwrap();
+    let draw = SceneDrawData::extract(&doc.scene, Some(&doc.selection), false);
+    assert_eq!(draw.objects[0].geometry.triangle_count(), 48);
+    doc.execute_json(r#"{"op":"set_select_mode","mode":"face"}"#, Origin::Gui)
+        .unwrap();
+    let draw = SceneDrawData::extract(&doc.scene, Some(&doc.selection), false);
+    assert_eq!(draw.objects[0].geometry.triangle_count(), 12);
+    assert_eq!(draw.objects[0].node_id, id);
+    // Rendering works with modifiers (soft path).
+    let img = render_image(
+        &doc.scene,
+        None,
+        &CameraSpec::default(),
+        &RenderOptions::default(),
+    )
+    .unwrap();
+    assert!(img.width > 0);
+}
+
+#[test]
+fn auto_smooth_keeps_hard_edges_and_smooths_curves() {
+    use forge3d_render::extract::MeshGeometry;
+    let cube = primitives::cube(2.0).unwrap();
+    let hard = MeshGeometry::from_mesh_shaded(&cube, 30.0);
+    let flat = MeshGeometry::from_mesh(&cube, false);
+    for (a, b) in hard.normals.iter().zip(&flat.normals) {
+        assert!(a.abs_diff_eq(*b, 1e-5));
+    }
+    let smooth = MeshGeometry::from_mesh_shaded(&cube, 180.0);
+    assert!(smooth
+        .normals
+        .iter()
+        .all(|n| n.x.abs() > 0.5 && n.z.abs() > 0.5));
+    // A sphere at 60 degrees auto smooth equals full smoothing.
+    let s = primitives::uv_sphere(1.0, 16, 8).unwrap();
+    let a = MeshGeometry::from_mesh_shaded(&s, 60.0);
+    let b = MeshGeometry::from_mesh(&s, true);
+    for (x, y) in a.normals.iter().zip(&b.normals) {
+        assert!(x.abs_diff_eq(*y, 1e-4), "{x} {y}");
+    }
+}

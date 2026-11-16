@@ -156,7 +156,7 @@ const TOOLS: &[Spec] = &[
     Spec {
         name: "mesh_edit",
         title: "Edit mesh",
-        description: "Apply a polygon-modeling operation to an object's mesh: extrude, inset, bevel, loop_cut, subdivide (Catmull-Clark), merge, delete, mirror, recalculate_normals, flip_normals, transform (move/rotate/scale elements) or set_mesh_data. Element indices (faces/edges/vertices) are optional: when omitted the object's current element selection from mesh_select is used. Indices change after topology edits; the result returns the new counts and the resulting element selection (e.g. the extruded cap faces), so you can chain edits.",
+        description: "Apply a destructive polygon-modeling operation to an object's base mesh: extrude, inset, bevel (segments > 1 = rounded), loop_cut, subdivide (Catmull-Clark), merge, delete, dissolve (remove elements but keep the surface closed), mirror, solidify (wall thickness), bridge_edge_loops, fill_holes, triangulate, tris_to_quads, poke, smooth (Laplacian), separate (faces into a new object), recalculate_normals, flip_normals, transform (move/rotate/scale elements) or set_mesh_data. For reversible symmetry/smoothing/thickness prefer modifier_edit. Element indices (faces/edges/vertices) are optional: when omitted the object's current element selection from mesh_select is used. Indices change after topology edits; the result returns the new counts and the resulting element selection (e.g. the extruded cap faces), so you can chain edits.",
         schema: schema_of::<MeshEditParams>,
         read_only: false,
         destructive: false,
@@ -176,6 +176,42 @@ const TOOLS: &[Spec] = &[
         title: "Get mesh data",
         description: "Read an object's mesh: vertex positions, face vertex-index lists and edges, paged with offset/limit (max 1000 per page; each list reports total and next_offset), optional normals, local or world coordinates, and a validation report (manifold, closed, consistent winding, issues). Use it to find element indices for mesh_select/mesh_edit.",
         schema: schema_of::<MeshGetParams>,
+        read_only: true,
+        destructive: false,
+        batchable: false,
+    },
+    Spec {
+        name: "modifier_edit",
+        title: "Edit modifier stack",
+        description: "Non-destructive modifiers evaluated in order on top of the object's base mesh (rendering and export use the result; mesh_edit/mesh_select keep working on the base mesh): mirror {axis, merge}, array {count, offset, merge}, subdivision {levels}, solidify {thickness}, bevel {width, segments, angle_deg}, triangulate. Actions: add (optionally at index), set (replace params and/or enabled), remove, move (reorder), apply (bake one modifier, or the whole stack without index, into the base mesh). Model one half and add mirror; add subdivision for smooth organic shapes. Returns the object with its stack and evaluated counts (`evaluated`, including warnings for modifiers that failed).",
+        schema: schema_of::<ModifierEditParams>,
+        read_only: false,
+        destructive: false,
+        batchable: true,
+    },
+    Spec {
+        name: "object_shading",
+        title: "Set shading",
+        description: "Flat or smooth shading for objects (default: selection). With smooth, `auto_smooth_angle_deg` keeps edges sharper than the angle hard (30-45 for hard-surface objects; omit for fully smooth organic shapes). Affects viewport, renders and glTF normals; geometry is unchanged.",
+        schema: schema_of::<ObjectShadingParams>,
+        read_only: false,
+        destructive: false,
+        batchable: true,
+    },
+    Spec {
+        name: "object_join",
+        title: "Join objects",
+        description: "Merge the meshes of several objects (default: selection) into `into` (default: active object), converting them into its local space; the other objects are deleted (their children are kept, re-parented to the target). Modifiers of joined objects are dropped, so apply them first. Weld touching parts afterwards with mesh_edit merge mode distance.",
+        schema: schema_of::<ObjectJoinParams>,
+        read_only: false,
+        destructive: true,
+        batchable: true,
+    },
+    Spec {
+        name: "mesh_measure",
+        title: "Measure meshes",
+        description: "Measure objects in world units (meters): dimensions (world bounding box size), surface area, volume (meaningful for closed meshes; `closed` tells), and element counts. Uses the evaluated mesh (with modifiers) unless base_mesh. Use it to check real-world proportions (a chair seat is ~0.45 m high, a mug ~0.1 m).",
+        schema: schema_of::<MeshMeasureParams>,
         read_only: true,
         destructive: false,
         batchable: false,
@@ -351,6 +387,9 @@ fn plan_tool(doc: &Document, name: &str, args: Value, ctx: &Ctx) -> ApiResult<Pl
         "mesh_edit" => plan::mesh_edit(doc, parse_args(args)?),
         "mesh_select" => plan::mesh_select(doc, parse_args(args)?),
         "boolean_op" => plan::boolean_op(doc, parse_args(args)?),
+        "modifier_edit" => plan::modifier_edit(doc, parse_args(args)?),
+        "object_shading" => plan::object_shading(doc, parse_args(args)?),
+        "object_join" => plan::object_join(doc, parse_args(args)?),
         "material_set" => plan::material_set(doc, parse_args(args)?),
         "file_import" => plan::file_import(doc, parse_args(args)?, ctx),
         other => Err(
@@ -462,6 +501,11 @@ impl Forge3dTools {
             "mesh_get" => {
                 let p: MeshGetParams = parse_args(args)?;
                 let v = self.handle.run(move |doc| mesh_get(doc, p)).await??;
+                Ok(ToolOutput::json(v))
+            }
+            "mesh_measure" => {
+                let p: MeshMeasureParams = parse_args(args)?;
+                let v = self.handle.run(move |doc| mesh_measure(doc, p)).await??;
                 Ok(ToolOutput::json(v))
             }
             "history_list" => {
@@ -800,6 +844,60 @@ fn mesh_get(doc: &Document, p: MeshGetParams) -> ApiResult<Value> {
         });
     }
     Ok(out)
+}
+
+fn mesh_measure(doc: &Document, p: MeshMeasureParams) -> ApiResult<Value> {
+    let ids = match resolve_refs(&doc.scene, &p.objects)? {
+        Some(ids) => ids,
+        None if !doc.selection.objects().is_empty() => doc.selection.objects().to_vec(),
+        None => doc
+            .scene
+            .traverse()
+            .into_iter()
+            .filter(|id| doc.scene.get(*id).is_some_and(|n| n.mesh.is_some()))
+            .collect(),
+    };
+    let mut out = Vec::with_capacity(ids.len());
+    let mut total_volume = 0.0f64;
+    let mut total_area = 0.0f64;
+    for id in ids {
+        let node = doc.scene.node(id)?;
+        let mesh = if p.base_mesh {
+            std::borrow::Cow::Borrowed(doc.scene.mesh(id)?)
+        } else {
+            doc.scene.evaluated_mesh(id)?
+        };
+        let mut world = mesh.into_owned();
+        world.transform(&doc.scene.world_transform(id)?);
+        let closed = world.is_closed();
+        let volume = world.signed_volume();
+        let area = world.surface_area();
+        total_area += area as f64;
+        if closed {
+            total_volume += volume as f64;
+        }
+        let dims = world
+            .bounding_box()
+            .map(|b| round3(b.size().to_array()))
+            .unwrap_or([0.0; 3]);
+        out.push(json!({
+            "object": id,
+            "name": node.name,
+            "dimensions": dims,
+            "surface_area": info::round(area),
+            "volume": if closed { json!(info::round(volume)) } else { Value::Null },
+            "closed": closed,
+            "vertex_count": world.vertex_count(),
+            "face_count": world.face_count(),
+            "evaluated": !p.base_mesh && node.has_active_modifiers(),
+        }));
+    }
+    Ok(json!({
+        "objects": out,
+        "total_surface_area": info::round(total_area as f32),
+        "total_volume_closed": info::round(total_volume as f32),
+        "units": "meters (area m^2, volume m^3)",
+    }))
 }
 
 fn history_list(doc: &Document, p: HistoryListParams) -> Value {

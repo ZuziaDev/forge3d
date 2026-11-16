@@ -27,3 +27,7 @@ egui-wgpu = { version = "0.37", features = ["x11", "wayland"] }
 egui-winit = "0.37"
 winit = "0.30"
 anyhow = "1"
+
+# Native file dialogs: Win32 / Cocoa only, so Linux builds need no GTK.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+rfd = { version = "0.15", default-features = false }

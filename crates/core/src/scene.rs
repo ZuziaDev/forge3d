@@ -1,6 +1,7 @@
 //! Scene graph: nodes with transforms, optional mesh and material, organized
 //! in a hierarchy.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use glam::Affine3A;
@@ -11,6 +12,7 @@ use uuid::Uuid;
 use crate::error::{CoreError, CoreResult};
 use crate::math::Aabb;
 use crate::mesh::Mesh;
+use crate::modifier::{self, Modifier, ModifierWarning};
 
 fn d_base_color() -> [f32; 4] {
     [0.8, 0.8, 0.8, 1.0]
@@ -93,6 +95,16 @@ pub struct Node {
     pub visible: bool,
     pub(crate) parent: Option<Uuid>,
     pub(crate) children: Vec<Uuid>,
+    /// Non-destructive modifier stack, evaluated in order on top of `mesh`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modifiers: Vec<Modifier>,
+    /// Smooth (interpolated) shading instead of flat faces.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shade_smooth: bool,
+    /// With smooth shading: edges whose faces meet at more than this angle
+    /// stay sharp (`None` = everything smooth).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_smooth_angle_deg: Option<f32>,
 }
 
 fn d_true() -> bool {
@@ -116,6 +128,9 @@ impl Node {
             visible: true,
             parent: None,
             children: Vec::new(),
+            modifiers: Vec::new(),
+            shade_smooth: false,
+            auto_smooth_angle_deg: None,
         }
     }
 
@@ -139,6 +154,34 @@ impl Node {
     }
     pub fn children(&self) -> &[Uuid] {
         &self.children
+    }
+
+    /// The mesh with all enabled modifiers applied (borrowed when there is
+    /// nothing to apply). `None` for nodes without a mesh.
+    pub fn evaluated_mesh(&self) -> Option<Cow<'_, Mesh>> {
+        self.evaluated_mesh_with_warnings().map(|(m, _)| m)
+    }
+
+    /// Like [`Node::evaluated_mesh`], also reporting modifiers that failed
+    /// (and were skipped).
+    pub fn evaluated_mesh_with_warnings(&self) -> Option<(Cow<'_, Mesh>, Vec<ModifierWarning>)> {
+        let mesh = self.mesh.as_ref()?;
+        Some(modifier::evaluate(mesh, &self.modifiers))
+    }
+
+    /// Whether any enabled modifier changes the base mesh.
+    pub fn has_active_modifiers(&self) -> bool {
+        self.modifiers.iter().any(|m| m.enabled)
+    }
+
+    /// Crease angle for shading normals: 0 for flat shading, the auto-smooth
+    /// angle (or 180 = fully smooth) for smooth shading.
+    pub fn shading_crease_deg(&self) -> f32 {
+        if self.shade_smooth {
+            self.auto_smooth_angle_deg.unwrap_or(180.0)
+        } else {
+            0.0
+        }
     }
 }
 
@@ -235,6 +278,10 @@ impl Scene {
     /// The mesh of a node (`node_has_no_mesh` error when absent).
     pub fn mesh(&self, id: Uuid) -> CoreResult<&Mesh> {
         self.node(id)?.mesh.as_ref().ok_or(CoreError::NoMesh(id))
+    }
+    /// Evaluated mesh (modifiers applied) of a node.
+    pub fn evaluated_mesh(&self, id: Uuid) -> CoreResult<Cow<'_, Mesh>> {
+        self.node(id)?.evaluated_mesh().ok_or(CoreError::NoMesh(id))
     }
     /// Mutable mesh of a node.
     pub fn mesh_mut(&mut self, id: Uuid) -> CoreResult<&mut Mesh> {

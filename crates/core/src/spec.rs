@@ -23,6 +23,7 @@ use crate::commands::*;
 use crate::error::{CoreError, CoreResult};
 use crate::math::{quat_from_euler_deg, Aabb, Axis, Space};
 use crate::mesh::{ElementKind, Mesh, MeshData};
+use crate::modifier::{Modifier, ModifierKind};
 use crate::ops::BooleanOp;
 use crate::primitives::PrimitiveSpec;
 use crate::scene::{Material, Node};
@@ -48,6 +49,9 @@ fn d_half() -> f32 {
 }
 fn d_merge_threshold() -> f32 {
     1e-4
+}
+fn d_quad_angle() -> f32 {
+    40.0
 }
 fn d_angle() -> f32 {
     30.0
@@ -221,7 +225,8 @@ pub enum CommandSpec {
         #[serde(default)]
         individual: bool,
     },
-    /// Single-segment chamfer of interior edges.
+    /// Bevel interior edges: `segments` = 1 is a flat chamfer, more give a
+    /// rounded profile.
     Bevel {
         #[serde(default)]
         object: Option<Uuid>,
@@ -229,6 +234,146 @@ pub enum CommandSpec {
         edges: Option<Vec<u32>>,
         #[serde(default = "d_width")]
         width: f32,
+        #[serde(default = "d_one")]
+        segments: u32,
+    },
+    /// Give the whole surface a thickness (inner shell + rim on open edges).
+    Solidify {
+        #[serde(default)]
+        object: Option<Uuid>,
+        /// Wall thickness, grown against the normals (negative = outward).
+        #[serde(default = "d_thickness")]
+        thickness: f32,
+    },
+    /// Connect two boundary loops (holes) touched by `edges` with quads.
+    BridgeEdgeLoops {
+        #[serde(default)]
+        object: Option<Uuid>,
+        #[serde(default)]
+        edges: Option<Vec<u32>>,
+    },
+    /// Close holes: loops touched by `edges` (default: selection; nothing selected = every hole).
+    FillHoles {
+        #[serde(default)]
+        object: Option<Uuid>,
+        #[serde(default)]
+        edges: Option<Vec<u32>>,
+        /// Triangle fan around a new center vertex instead of one n-gon.
+        #[serde(default)]
+        triangle_fan: bool,
+    },
+    /// Remove vertices / edges / faces merging the faces around them into n-gons.
+    Dissolve {
+        #[serde(default)]
+        object: Option<Uuid>,
+        /// Default: from the selection mode.
+        #[serde(default)]
+        kind: Option<ElementKind>,
+        #[serde(default)]
+        indices: Option<Vec<u32>>,
+    },
+    /// Split faces into triangles (default: selected faces, or all when none selected).
+    Triangulate {
+        #[serde(default)]
+        object: Option<Uuid>,
+        #[serde(default)]
+        faces: Option<Vec<u32>>,
+    },
+    /// Join adjacent triangle pairs into quads (default: selected faces, or all).
+    TrisToQuads {
+        #[serde(default)]
+        object: Option<Uuid>,
+        #[serde(default)]
+        faces: Option<Vec<u32>>,
+        #[serde(default = "d_quad_angle")]
+        max_angle_deg: f32,
+    },
+    /// Replace faces by triangle fans around their centers (pushed by `offset`).
+    PokeFaces {
+        #[serde(default)]
+        object: Option<Uuid>,
+        #[serde(default)]
+        faces: Option<Vec<u32>>,
+        #[serde(default)]
+        offset: f32,
+    },
+    /// Laplacian smoothing of vertices (default: selection, or all when none selected).
+    SmoothVertices {
+        #[serde(default)]
+        object: Option<Uuid>,
+        #[serde(default)]
+        vertices: Option<Vec<u32>>,
+        #[serde(default = "d_half")]
+        factor: f32,
+        #[serde(default = "d_one")]
+        iterations: u32,
+    },
+    /// Move faces (default: selected) into a new object.
+    Separate {
+        #[serde(default)]
+        object: Option<Uuid>,
+        #[serde(default)]
+        faces: Option<Vec<u32>>,
+        /// Name of the new object (default: the source name, made unique).
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Merge objects' meshes into `into` (default: active) and delete the others.
+    JoinObjects {
+        #[serde(default)]
+        objects: Option<Vec<Uuid>>,
+        #[serde(default)]
+        into: Option<Uuid>,
+    },
+
+    // ----- modifiers and shading -----
+    /// Append (or insert at `index`) a non-destructive modifier.
+    AddModifier {
+        #[serde(default)]
+        object: Option<Uuid>,
+        modifier: ModifierKind,
+        #[serde(default = "d_true")]
+        enabled: bool,
+        #[serde(default)]
+        index: Option<usize>,
+    },
+    /// Remove the modifier at `index`.
+    RemoveModifier {
+        #[serde(default)]
+        object: Option<Uuid>,
+        index: usize,
+    },
+    /// Replace the parameters (`modifier`) and/or `enabled` of the modifier at `index`.
+    SetModifier {
+        #[serde(default)]
+        object: Option<Uuid>,
+        index: usize,
+        #[serde(default)]
+        modifier: Option<ModifierKind>,
+        #[serde(default)]
+        enabled: Option<bool>,
+    },
+    /// Reorder the stack: move the modifier at `from` to position `to`.
+    MoveModifier {
+        #[serde(default)]
+        object: Option<Uuid>,
+        from: usize,
+        to: usize,
+    },
+    /// Bake the modifier at `index` into the base mesh (omit `index` to apply the whole stack).
+    ApplyModifier {
+        #[serde(default)]
+        object: Option<Uuid>,
+        #[serde(default)]
+        index: Option<usize>,
+    },
+    /// Flat or smooth shading; with smooth, edges sharper than `auto_smooth_angle_deg` stay hard.
+    SetShading {
+        #[serde(default)]
+        objects: Option<Vec<Uuid>>,
+        smooth: bool,
+        #[serde(default)]
+        auto_smooth_angle_deg: Option<f32>,
     },
     /// Insert `cuts` edge loops across the quad ring through `edge`.
     LoopCut {
@@ -648,7 +793,117 @@ impl CommandSpec {
                 object,
                 edges,
                 width,
-            } => Box::new(MeshEdit::new(object, MeshOp::Bevel { edges, width })),
+                segments,
+            } => Box::new(MeshEdit::new(
+                object,
+                MeshOp::Bevel {
+                    edges,
+                    width,
+                    segments,
+                },
+            )),
+            CommandSpec::Solidify { object, thickness } => {
+                Box::new(MeshEdit::new(object, MeshOp::Solidify { thickness }))
+            }
+            CommandSpec::BridgeEdgeLoops { object, edges } => {
+                Box::new(MeshEdit::new(object, MeshOp::BridgeEdgeLoops { edges }))
+            }
+            CommandSpec::FillHoles {
+                object,
+                edges,
+                triangle_fan,
+            } => Box::new(MeshEdit::new(
+                object,
+                MeshOp::FillHoles {
+                    edges,
+                    fan: triangle_fan,
+                },
+            )),
+            CommandSpec::Dissolve {
+                object,
+                kind,
+                indices,
+            } => Box::new(MeshEdit::new(object, MeshOp::Dissolve { kind, indices })),
+            CommandSpec::Triangulate { object, faces } => {
+                Box::new(MeshEdit::new(object, MeshOp::Triangulate { faces }))
+            }
+            CommandSpec::TrisToQuads {
+                object,
+                faces,
+                max_angle_deg,
+            } => Box::new(MeshEdit::new(
+                object,
+                MeshOp::TrisToQuads {
+                    faces,
+                    max_angle_deg,
+                },
+            )),
+            CommandSpec::PokeFaces {
+                object,
+                faces,
+                offset,
+            } => Box::new(MeshEdit::new(object, MeshOp::Poke { faces, offset })),
+            CommandSpec::SmoothVertices {
+                object,
+                vertices,
+                factor,
+                iterations,
+            } => Box::new(MeshEdit::new(
+                object,
+                MeshOp::Smooth {
+                    vertices,
+                    factor,
+                    iterations,
+                },
+            )),
+            CommandSpec::Separate {
+                object,
+                faces,
+                name,
+            } => Box::new(SeparateFaces::new(object, faces, name)),
+            CommandSpec::JoinObjects { objects, into } => Box::new(JoinObjects::new(objects, into)),
+            CommandSpec::AddModifier {
+                object,
+                modifier,
+                enabled,
+                index,
+            } => Box::new(ModifierEdit::new(
+                object,
+                ModifierOp::Add {
+                    modifier: Modifier {
+                        enabled,
+                        kind: modifier,
+                    },
+                    index,
+                },
+            )?),
+            CommandSpec::RemoveModifier { object, index } => {
+                Box::new(ModifierEdit::new(object, ModifierOp::Remove { index })?)
+            }
+            CommandSpec::SetModifier {
+                object,
+                index,
+                modifier,
+                enabled,
+            } => Box::new(ModifierEdit::new(
+                object,
+                ModifierOp::Set {
+                    index,
+                    kind: modifier,
+                    enabled,
+                },
+            )?),
+            CommandSpec::MoveModifier { object, from, to } => {
+                Box::new(ModifierEdit::new(object, ModifierOp::Move { from, to })?)
+            }
+            CommandSpec::ApplyModifier { object, index } => {
+                Box::new(ModifierEdit::new(object, ModifierOp::Apply { index })?)
+            }
+            CommandSpec::SetShading {
+                objects,
+                smooth,
+                auto_smooth_angle_deg,
+            } => Box::new(SetShading::new(objects, smooth, auto_smooth_angle_deg)?),
             CommandSpec::LoopCut {
                 object,
                 edge,

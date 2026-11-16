@@ -3,6 +3,7 @@
 
 use forge3d_core::math::{Axis, Space};
 use forge3d_core::mesh::{ElementKind, MeshData};
+use forge3d_core::modifier::ModifierKind;
 use forge3d_core::ops::BooleanOp;
 use forge3d_core::primitives::PrimitiveSpec;
 use forge3d_core::scene::Material;
@@ -36,6 +37,9 @@ fn d_threshold() -> f32 {
 }
 fn d_angle() -> f32 {
     30.0
+}
+fn d_quad_angle() -> f32 {
+    40.0
 }
 fn d_max_indices() -> usize {
     200
@@ -209,12 +213,83 @@ pub enum MeshOperation {
         #[serde(default)]
         individual: bool,
     },
-    /// Chamfer (single segment bevel) interior edges with the given width.
+    /// Bevel interior edges with the given width. `segments` 1 = flat chamfer;
+    /// 2..=16 = rounded profile (use 3-4 for nicely rounded hard-surface edges).
+    /// The new bevel faces become selected.
     Bevel {
         #[serde(default)]
         edges: Option<Vec<u32>>,
         #[serde(default = "d_width")]
         width: f32,
+        #[serde(default = "d_one")]
+        segments: u32,
+    },
+    /// Give the whole surface a wall `thickness` (inner shell grown against
+    /// the normals, rim quads on open edges). Turns an open surface into a solid.
+    Solidify {
+        #[serde(default = "d_thickness")]
+        thickness: f32,
+    },
+    /// Connect two holes (boundary loops with equal vertex counts) with a ring
+    /// of quads. `edges`: any edges on the two loops (default: selection).
+    BridgeEdgeLoops {
+        #[serde(default)]
+        edges: Option<Vec<u32>>,
+    },
+    /// Close holes with one n-gon each (or a triangle fan). Default: holes
+    /// touching the selected edges, or every hole when nothing is selected.
+    FillHoles {
+        #[serde(default)]
+        edges: Option<Vec<u32>>,
+        #[serde(default)]
+        triangle_fan: bool,
+    },
+    /// Remove vertices/edges/faces while merging the surrounding faces into
+    /// one n-gon (keeps the surface closed, unlike delete).
+    Dissolve {
+        #[serde(default)]
+        kind: Option<ElementKind>,
+        #[serde(default)]
+        indices: Option<Vec<u32>>,
+    },
+    /// Split faces into triangles (default: selected faces, or all).
+    Triangulate {
+        #[serde(default)]
+        faces: Option<Vec<u32>>,
+    },
+    /// Join adjacent triangle pairs into convex quads when their normals
+    /// differ by at most `max_angle_deg` (default: selected faces, or all).
+    TrisToQuads {
+        #[serde(default)]
+        faces: Option<Vec<u32>>,
+        #[serde(default = "d_quad_angle")]
+        max_angle_deg: f32,
+    },
+    /// Replace faces with triangle fans around their centers, pushed by
+    /// `offset` along the face normal (spikes / pyramids).
+    Poke {
+        #[serde(default)]
+        faces: Option<Vec<u32>>,
+        #[serde(default)]
+        offset: f32,
+    },
+    /// Laplacian smoothing: move vertices `factor` (0..1) towards the average
+    /// of their neighbours, `iterations` times (default: selection, or all).
+    Smooth {
+        #[serde(default)]
+        vertices: Option<Vec<u32>>,
+        #[serde(default = "d_half")]
+        factor: f32,
+        #[serde(default = "d_one")]
+        iterations: u32,
+    },
+    /// Move faces (default: selected) into a new object with the same
+    /// transform, material, shading and modifiers.
+    Separate {
+        #[serde(default)]
+        faces: Option<Vec<u32>>,
+        #[serde(default)]
+        name: Option<String>,
     },
     /// Insert `cuts` edge loops across the ring of quads through `edge`.
     LoopCut {
@@ -552,4 +627,88 @@ pub struct BatchParams {
     /// Steps executed in order. Later steps can reference objects created by
     /// earlier steps by name. If any step fails, all are rolled back.
     pub steps: Vec<BatchStepSchema>,
+}
+
+/// One modifier-stack action.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModifierAction {
+    /// Append a modifier (or insert it at `index`).
+    Add {
+        modifier: ModifierKind,
+        #[serde(default = "d_true")]
+        enabled: bool,
+        #[serde(default)]
+        index: Option<usize>,
+    },
+    /// Replace the parameters (`modifier`, full object incl. `type`) and/or `enabled`.
+    Set {
+        index: usize,
+        #[serde(default)]
+        modifier: Option<ModifierKind>,
+        #[serde(default)]
+        enabled: Option<bool>,
+    },
+    /// Remove the modifier at `index`.
+    Remove { index: usize },
+    /// Move the modifier at `from` to position `to` (order matters: e.g.
+    /// mirror before subdivision for a seamless symmetric surface).
+    Move { from: usize, to: usize },
+    /// Bake the modifier at `index` into the base mesh, or the whole stack
+    /// when `index` is omitted. Needed before element edits should see the result.
+    Apply {
+        #[serde(default)]
+        index: Option<usize>,
+    },
+}
+
+/// Parameters of `modifier_edit`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ModifierEditParams {
+    /// Object (id or unique name). Default: the active object.
+    #[serde(default)]
+    pub object: Option<ObjectRef>,
+    /// The stack change, tagged by `action`, e.g.
+    /// `{"action":"add","modifier":{"type":"mirror","axis":"x"}}`.
+    #[serde(flatten)]
+    pub action: ModifierAction,
+}
+
+/// Parameters of `object_shading`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectShadingParams {
+    /// Objects (ids or unique names). Default: the selection.
+    #[serde(default)]
+    pub objects: Option<Vec<ObjectRef>>,
+    /// true = smooth (interpolated normals), false = flat faces.
+    pub smooth: bool,
+    /// With smooth: edges whose faces meet at more than this angle (degrees,
+    /// 0..=180) stay sharp. 30-45 suits hard-surface models; omit for fully smooth.
+    #[serde(default)]
+    pub auto_smooth_angle_deg: Option<f32>,
+}
+
+/// Parameters of `object_join`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectJoinParams {
+    /// Objects to merge (ids or unique names, at least two incl. `into`). Default: the selection.
+    #[serde(default)]
+    pub objects: Option<Vec<ObjectRef>>,
+    /// Object that receives the geometry (default: the active object).
+    #[serde(default)]
+    pub into: Option<ObjectRef>,
+}
+
+/// Parameters of `mesh_measure`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMeasureParams {
+    /// Objects to measure (ids or unique names). Default: the selection, or every mesh object.
+    #[serde(default)]
+    pub objects: Option<Vec<ObjectRef>>,
+    /// Measure the base mesh instead of the evaluated (modifiers applied) mesh.
+    #[serde(default)]
+    pub base_mesh: bool,
 }
